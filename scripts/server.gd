@@ -134,12 +134,14 @@ func _on_peer_left(peer_id: int) -> void:
 
 ## Le monde dans lequel un peer joue (Tournoi ou une partie), ou vide.
 func _world_of(peer_id: int) -> Dictionary:
-	if _tournament_peers.has(peer_id):
-		return {"game": game, "peers": _tournament_peers}
+	# Priorite au monde d'une partie VS en cours : pendant un match, toutes les
+	# commandes du joueur doivent viser ce monde, pas le Tournoi persistant.
 	for wid in _party_worlds:
 		var w: Dictionary = _party_worlds[wid]
 		if w.peers.has(peer_id):
 			return w
+	if _tournament_peers.has(peer_id):
+		return {"game": game, "peers": _tournament_peers}
 	return {}
 
 
@@ -270,7 +272,8 @@ func start_match_game(match_dict: Dictionary) -> void:
 	var g := GameState.new()
 	g.name = "GameState_P%d" % mid
 	add_child(g)
-	g.end_peace()
+	# Temps de paix en VS : chacun conquerit des cites neutres avant la guerre.
+	# (on ne fait PAS end_peace() ; le timer declenchera la guerre plus tard)
 	# Option "avec IA" : sans IA, pas de seigneurs ennemis (pur PvP).
 	if not bool(match_dict.get("with_ai", true)):
 		for c: CityNode in g.cities:
@@ -282,18 +285,25 @@ func start_match_game(match_dict: Dictionary) -> void:
 	_shrink_vs_world(g)
 	# Pas de saisons en VS : une seule bataille jusqu'au vainqueur.
 	g.season_remaining = 1.0e9
+	# VS = free-for-all sur toute la carte reduite : on ouvre toutes les zones
+	# pour que chaque cité (neutre ou adverse) soit attaquable.
+	g._zone_front = g.zones.size()
 	var peers: Dictionary = {}
+	var idx := 0
 	for p in players:
 		var pid: int = int(p)
 		if pid > 1:
-			# VS : capitales regroupees pres du centre pour des batailles rapides.
-			_assign_city(g, pid, -1, true)
+			# VS : capitales reparties en anneau autour du centre (angles
+			# distincts) pour laisser des cites neutres entre les joueurs.
+			_assign_city(g, pid, -1, true, idx, players.size())
 			peers[pid] = true
+			idx += 1
 	_party_worlds[mid] = {
 		"game": g, "peers": peers,
 		"eliminated": {}, "toast": "",
 		"over": false, "vs_winner": "", "over_timer": 0.0,
 		"is_vs": true,
+		"peace_time": VS_PEACE_TIME, "war_declared": false,
 	}
 	_broadcast_snapshots()
 	print("SERVER: partie \"%s\" demarree -- %d joueur(s), monde reduit (%d villes)." % [match_dict.get("name", "?"), players.size(), g.cities.size()])
@@ -301,6 +311,11 @@ func start_match_game(match_dict: Dictionary) -> void:
 
 ## Rayon (px) du monde d'une partie VS : carte reduite, joueurs proches.
 const VS_RADIUS := 2000.0
+## Rayon (px) de l'anneau où sont placées les capitales VS — assez loin du
+## centre pour qu'il reste des cités neutres entre les joueurs.
+const VS_ASSIGN_RADIUS := 950.0
+## Durée (s) du temps de paix en VS : on conquiert des cités neutres avant la guerre.
+const VS_PEACE_TIME := 75.0
 
 func _shrink_vs_world(g: GameState) -> void:
 	## Ne garde que les villes proches du centre => carte plus petite et
@@ -347,6 +362,15 @@ func _vs_lifecycle(w: Dictionary, mid: int, delta: float) -> void:
 		if w.over_timer >= 7.0:
 			_end_vs_match(w, mid)
 		return
+	# Temps de paix : une fois écoulé, la guerre commence (PvP + IA actifs).
+	if not bool(w.get("war_declared", false)):
+		var peace_left: float = float(w.get("peace_time", 0.0))
+		peace_left -= delta
+		w.peace_time = peace_left
+		if peace_left <= 0.0:
+			w.war_declared = true
+			w.game.end_peace()
+			_broadcast_toast(w, "⚔️ La guerre a commencé ! Tous pour soi !")
 	var active: Array = []
 	for pid: int in w.peers.keys():
 		if _cities_of(w.game, pid) > 0:
@@ -379,9 +403,10 @@ func _end_vs_match(w: Dictionary, mid: int) -> void:
 
 ## Attribue une capitale au joueur. Si zone_idx >= 0, le choix se limite a
 ## cette zone physique (choix de zone de depart). Si close_spawn est vrai
-## (Parties VS), on REGROUPE les capitales pres du centre pour des batailles
-## rapides au lieu de les eloigner au maximum.
-func _assign_city(g: GameState, peer_id: int, zone_idx: int = -1, close_spawn: bool = false) -> void:
+## (Parties VS), on repartit les capitales sur un anneau autour du centre
+## (angles distincts) pour laisser des cites neutres entre les joueurs.
+func _assign_city(g: GameState, peer_id: int, zone_idx: int = -1, close_spawn: bool = false,
+		spread_idx: int = 0, total_players: int = 2) -> void:
 	if g == null:
 		return
 	# Si le joueur possede deja une ville (reconnexion), on la lui rend.
@@ -393,15 +418,22 @@ func _assign_city(g: GameState, peer_id: int, zone_idx: int = -1, close_spawn: b
 	var best: CityNode = null
 	var best_score := -INF
 	if close_spawn:
-		best_score = INF   # on va chercher le MINIMUM de distance au centre
+		best_score = INF   # on cherche la distance MINIMALE au point cible
+	var target := Vector2.ZERO
+	if close_spawn:
+		# VS : point cible sur l'anneau, angle unique par joueur pour etaler
+		# les capitales et garder des cites neutres entre les joueurs.
+		var total := maxi(total_players, 2)
+		var angle := TAU * float(spread_idx) / float(total) + 0.37
+		target = Vector2(cos(angle), sin(angle)) * VS_ASSIGN_RADIUS
 	for c: CityNode in g.cities:
 		if c.owner != CityNode.OWNER_NEUTRAL or c.controller != 0:
 			continue
 		if zone_idx >= 0 and g.zone_of(c) != zone_idx:
 			continue   # choix de zone : restreindre a cette zone
 		if close_spawn:
-			# VS : capitale au plus pres du centre => les joueurs se rencontrent vite.
-			var d0: float = c.map_pos.distance_to(Vector2.ZERO)
+			# VS : capitale la plus proche du point de l'anneau du joueur.
+			var d0: float = c.map_pos.distance_to(target)
 			if d0 < best_score:
 				best_score = d0
 				best = c
@@ -482,11 +514,13 @@ func _broadcast_snapshots() -> void:
 		if w.peers.is_empty():
 			continue
 		var psnap: Dictionary = _build_snapshot(w.game)
-		# Snapshot specifique a la partie (toast + fin de partie VS).
+		# Snapshot specifique a la partie (toast + fin de partie VS + paix).
 		psnap["toast"] = w.get("toast", "")
 		w.toast = ""
 		psnap["vs_over"] = bool(w.get("over", false))
 		psnap["vs_winner"] = str(w.get("vs_winner", ""))
+		psnap["peace_left"] = float(w.get("peace_time", 0.0))
+		psnap["war_declared"] = bool(w.get("war_declared", false))
 		for pid in w.peers:
 			if int(pid) > 1 and int(pid) in known and _ready_peers.has(pid):
 				_recv_snapshot.rpc_id(int(pid), psnap)
@@ -497,6 +531,15 @@ func _rpc_game_ready() -> void:
 	if not multiplayer.is_server():
 		return
 	_ready_peers[multiplayer.get_remote_sender_id()] = true
+
+
+## Le client a quitté la scène de jeu (retour lobby) : on ne lui envoie plus
+## les snapshots/RPC de jeu pour éviter les erreurs "Node Main not found".
+@rpc("any_peer", "reliable")
+func _rpc_game_left() -> void:
+	if not multiplayer.is_server():
+		return
+	_ready_peers.erase(multiplayer.get_remote_sender_id())
 
 
 ## Stub : le serveur ne fait qu'ENVOYER les snapshots.
@@ -526,6 +569,11 @@ func _cmd_launch(from_id: int, to_id: int, troops: int) -> void:
 	var src: CityNode = g.get_city(from_id)
 	if src == null or src.owner != CityNode.OWNER_PLAYER or src.controller != peer:
 		return
+	# Temps de paix en VS : on ne peut conquerir QUE des cites neutres.
+	if bool(w.get("is_vs", false)) and float(w.get("peace_time", 0.0)) > 0.0:
+		var dst: CityNode = g.get_city(to_id)
+		if dst == null or dst.owner != CityNode.OWNER_NEUTRAL:
+			return
 	g.launch_army(from_id, to_id, troops)
 
 

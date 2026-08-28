@@ -27,6 +27,7 @@ var _net: Node = null             # /root/LanNet autoload (resolved at runtime)
 # Client-side snapshot state.
 var _vs_handled := false      # VS end-of-match already processed
 var _vs_returning := false    # a lobby return is already scheduled
+var _war_toasted := false     # VS peace->war toast already shown
 var _snap: Dictionary = {}
 var _has_snap := false
 
@@ -195,6 +196,19 @@ func _rpc_game_ready() -> void:
 	pass
 
 
+## Signale au serveur qu'on quitte la scène de jeu (retour lobby), puis on y va.
+func _leave_game() -> void:
+	if _net != null and _net.is_connected_to_room():
+		_rpc_game_left.rpc_id(1)
+	get_tree().change_scene_to_file("res://scenes/Lobby.tscn")
+
+
+## Client-side stub (handled on the server).
+@rpc("any_peer", "reliable")
+func _rpc_game_left() -> void:
+	pass
+
+
 # ------------------------------------------------------------- process
 
 func _process(delta: float) -> void:
@@ -342,6 +356,12 @@ func _host_render_update() -> void:
 func _render_snap() -> void:
 	if not _has_snap:
 		return
+	# VS : toast une seule fois quand la paix s'achève (guerre déclarée).
+	if _net != null and str(_net.get("mode")) == "vs":
+		var wd: bool = bool(_snap.get("war_declared", false))
+		if wd and not _war_toasted:
+			_war_toasted = true
+			_show_toast("⚔️ La guerre a commencé ! Tous pour soi !")
 	var names: Dictionary = _snap.get("names", {})
 	_has_capital = false
 	for e in _snap["cities"]:
@@ -483,9 +503,12 @@ func _on_map_click(screen_pos: Vector2) -> void:
 			target_id = id
 			_show_info_bar()
 	elif source_id != -1:
-		# Seule SA PROPRE ville (même controller) est "amie". En VS, la ville d'un
-		# autre joueur est OWNER_PLAYER mais de controller différent : ennemie.
-		if hit["owner"] == CityNode.OWNER_PLAYER and int(hit.get("controller", 0)) == _net.my_id():
+		# Pendant le temps de paix VS, on ne peut conquérir que des cités NEUTRES.
+		if str(_net.get("mode")) == "vs" and float(_snap.get("peace_left", 0.0)) > 0.0 \
+				and hit["owner"] != CityNode.OWNER_NEUTRAL:
+			_show_toast("☮ Paix en cours — attaquez d'abord des cités neutres.")
+			_clear_selection()
+		elif hit["owner"] == CityNode.OWNER_PLAYER and int(hit.get("controller", 0)) == _net.my_id():
 			_show_toast("Cité amie — choisissez une cible ennemie.")
 			_clear_selection()
 		else:
@@ -827,8 +850,15 @@ func _update_hud() -> void:
 	var mode_txt := "Conquête"
 	if _net != null and str(_net.get("mode")) == "vs":
 		mode_txt = "VS"
-	_top_label.text = "[%s] Niv %d · Or %d · S%d %d:%02d · Zone %d/%d · %s · Dom %d%%" % [
-		mode_txt, lvl, gold, season, mm, ss, mini(front + 1, ztotal), ztotal, zname, dom,
+	var peace_txt := ""
+	if _net != null and str(_net.get("mode")) == "vs":
+		var pl: float = float(_snap.get("peace_left", 0.0))
+		if pl > 0.0:
+			peace_txt = "  ☮ PAIX %d s" % int(pl)
+		elif pl <= 0.0 and _has_snap:
+			peace_txt = "  ⚔️ GUERRE"
+	_top_label.text = "[%s]%s Niv %d · Or %d · S%d %d:%02d · Zone %d/%d · %s · Dom %d%%" % [
+		mode_txt, peace_txt, lvl, gold, season, mm, ss, mini(front + 1, ztotal), ztotal, zname, dom,
 	]
 
 
@@ -851,7 +881,7 @@ func _return_to_lobby_after(delay: float) -> void:
 	_vs_returning = true
 	await get_tree().create_timer(delay).timeout
 	if is_inside_tree():
-		get_tree().change_scene_to_file("res://scenes/Lobby.tscn")
+		_leave_game()
 
 
 func _recenter() -> void:
@@ -961,5 +991,7 @@ func _toggle_help() -> void:
 
 
 func _on_quit() -> void:
+	if _net != null and _net.is_connected_to_room():
+		_rpc_game_left.rpc_id(1)
 	_net.disconnect_from_room()
 	get_tree().change_scene_to_file("res://scenes/Lobby.tscn")
