@@ -60,6 +60,9 @@ var _pause_visible := false
 var _recenter_btn: Button
 var _my_capital := Vector2.ZERO
 var _has_capital := false
+var _help_layer: CanvasLayer
+var _help_visible := false
+var _help_btn: Button
 
 
 func _ready() -> void:
@@ -378,6 +381,11 @@ func _army_pos(a: Army) -> Vector2:
 # ------------------------------------------------------------- input
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _help_visible:
+		if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+			_toggle_help()
+			get_viewport().set_input_as_handled()
+		return
 	if _pause_visible:
 		if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 			_toggle_pause()
@@ -616,7 +624,15 @@ func _build_hud() -> void:
 	_recenter_btn.pressed.connect(_recenter)
 	root.add_child(_recenter_btn)
 
+	_help_btn = Button.new()
+	_help_btn.text = "?"
+	_help_btn.tooltip_text = "Aide / tutoriel (Échap ferme)"
+	_help_btn.position = Vector2(10, 100)
+	_help_btn.pressed.connect(_toggle_help)
+	root.add_child(_help_btn)
+
 	_build_pause_menu(root)
+	_build_help_menu(root)
 
 	_toast = Label.new()
 	_toast.anchor_left = 0.5
@@ -842,6 +858,57 @@ func _toggle_pause() -> void:
 	_pause_visible = not _pause_visible
 	if _pause_layer != null:
 		_pause_layer.visible = _pause_visible
+
+
+func _build_help_menu(root: Control) -> void:
+	_help_layer = CanvasLayer.new()
+	_help_layer.name = "HelpLayer"
+	_help_layer.layer = 35
+	_help_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_help_layer)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.7)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	_help_layer.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_help_layer.add_child(center)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(560, 0)
+	center.add_child(panel)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 8)
+	panel.add_child(vb)
+	var lbl := Label.new()
+	lbl.text = "📖 AIDE — Empire of Lords"
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", 24)
+	vb.add_child(lbl)
+	var guide := Label.new()
+	guide.text = "• Votre capitale produit des troupes et de l'or en continu.\n"
+	guide.text += "• Cliquez sur UNE DE VOS villes pour la sélectionner, puis sur une ville neutre/ennemie et choisissez le % de troupes à envoyer.\n"
+	guide.text += "• Le combat est calculé automatiquement à l'arrivée (Force_Attaque > Force_Défense). Conquérez les villes pour étendre votre royaume.\n"
+	guide.text += "• Améliorez vos villes (niveau = plus de production et de défense).\n"
+	guide.text += "• Les SAISONS avancent : à chaque fin de saison, le monde évolue et votre rang (Bronze → Diamant) progresse.\n"
+	guide.text += "• La ZONE peut être débloquée : les villes de la zone actuelle une fois conquises, la frontière avance.\n"
+	guide.text += "• Touches : H = capitale · Échap = menu · molette = zoom · glisser (clic droit/milieu) = déplacer la carte.\n"
+	guide.text += "• Votre pseudo apparaît au-dessus de VOS villes (couleur unique), vos alliés aussi."
+	guide.add_theme_font_size_override("font_size", 14)
+	guide.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(guide)
+	var close := Button.new()
+	close.text = "Compris !"
+	close.custom_minimum_size = Vector2(0, 42)
+	close.pressed.connect(_toggle_help)
+	vb.add_child(close)
+	_help_layer.visible = false
+
+
+func _toggle_help() -> void:
+	_help_visible = not _help_visible
+	if _help_layer != null:
+		_help_layer.visible = _help_visible
 
 
 func _on_quit() -> void:
