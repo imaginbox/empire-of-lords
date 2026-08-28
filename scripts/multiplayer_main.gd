@@ -60,6 +60,7 @@ var _pause_visible := false
 var _recenter_btn: Button
 var _my_capital := Vector2.ZERO
 var _has_capital := false
+var _centered_once := false
 var _help_layer: CanvasLayer
 var _help_visible := false
 var _help_btn: Button
@@ -359,6 +360,10 @@ func _render_snap() -> void:
 				_my_capital = Vector2(e["x"], e["y"])
 				_has_capital = true
 		(n.get_node("Garrison") as Label).text = str(e["garrison"])
+	if _has_capital and not _centered_once:
+		_centered_once = true
+		camera.position = _my_capital
+		_clamp_camera()
 	for ch in _army_root.get_children():
 		ch.free()
 	for a in _snap["armies"]:
@@ -734,11 +739,26 @@ func _show_info_bar() -> void:
 	_ctx_title.text = "%s (Lv %d)" % [d.get("name", "-"), int(d.get("level", 1))]
 	_ctx_info.text = "Garnison : %d\nPropriétaire : %s" % [
 		int(d.get("garrison", 0)),
-		"Vous" if int(d.get("controller", 0)) == _net.my_id() else ("Joueur" if d.get("owner", 0) == CityNode.OWNER_PLAYER else ("Ennemi" if d.get("owner", 0) == CityNode.OWNER_ENEMY else "Neutre")),
+		_owner_name(d),
 	]
 	_send_btn.visible = false
 	_upgrade_btn.visible = false
 	_position_ctx()
+
+
+func _owner_name(d: Dictionary) -> String:
+	var owner := int(d.get("owner", 0))
+	var ctrl := int(d.get("controller", 0))
+	if owner == CityNode.OWNER_PLAYER:
+		if ctrl == _net.my_id():
+			return "Vous"
+		var names: Dictionary = _snap.get("names", {})
+		return str(names.get(ctrl, "Joueur %d" % ctrl))
+	if owner == CityNode.OWNER_ENEMY:
+		return "Ennemi"
+	if owner == CityNode.OWNER_ALLY:
+		return "Allié"
+	return "Neutre"
 
 
 func _city_state(id: int) -> Dictionary:

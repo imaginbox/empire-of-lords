@@ -176,30 +176,44 @@ func start_match_game(match_dict: Dictionary) -> void:
 func _assign_city(g: GameState, peer_id: int) -> void:
 	if g == null:
 		return
+	# Si le joueur possede deja une ville (reconnexion), on la lui rend.
 	for c: CityNode in g.cities:
 		if c.owner == CityNode.OWNER_PLAYER and c.controller == peer_id:
 			c.revealed = true
 			g.node_changed.emit(c.id)
 			return
+	# Sinon : on attribue une ville NEUTRE LIBRE, la plus eloignee possible des
+	# villes des autres joueurs => chaque joueur apparait a un ENDROIT DISTINCT
+	# de la carte et peut voir les autres (pas de brouillard en multijoueur).
+	# Jamais une ville que quelqu'un possede deja (bug "meme perso" corrige).
 	var best: CityNode = null
-	var best_d := INF
+	var best_score := -INF
 	for c: CityNode in g.cities:
-		if c.owner == CityNode.OWNER_NEUTRAL and c.controller == 0 \
-				and g.zone_of(c) <= g._zone_front:
-			var dd: float = c.map_pos.distance_to(Vector2.ZERO)
-			if dd < best_d:
-				best_d = dd
-				best = c
+		if c.owner != CityNode.OWNER_NEUTRAL or c.controller != 0:
+			continue
+		var min_d := INF
+		var others := 0
+		for o: CityNode in g.cities:
+			if o.owner == CityNode.OWNER_PLAYER and o.controller > 1:
+				others += 1
+				var dd: float = c.map_pos.distance_to(o.map_pos)
+				if dd < min_d:
+					min_d = dd
+		var score: float = c.map_pos.distance_to(Vector2.ZERO) if others == 0 else min_d
+		if g.zone_of(c) <= g._zone_front:
+			score += 2000.0   # on prefere la zone actuelle (jouable)
+		if score > best_score:
+			best_score = score
+			best = c
 	if best == null:
-		best = g.get_city(0)
-	if best == null:
+		print("SERVER: aucune ville libre a attribuer au joueur %d." % peer_id)
 		return
 	best.owner = CityNode.OWNER_PLAYER
 	best.garrison = maxi(best.garrison, 300)
 	best.controller = peer_id
 	best.revealed = true
 	g.node_changed.emit(best.id)
-	print("SERVER: %s attribuee au joueur %d." % [best.node_name, peer_id])
+	print("SERVER: %s attribuee au joueur %d (apparition distincte)." % [best.node_name, peer_id])
 
 
 # ------------------------------------------------------------- snapshots
