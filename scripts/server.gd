@@ -273,7 +273,8 @@ func start_match_game(match_dict: Dictionary) -> void:
 	for p in players:
 		var pid: int = int(p)
 		if pid > 1:
-			_assign_city(g, pid)
+			# VS : capitales regroupees pres du centre pour des batailles rapides.
+			_assign_city(g, pid, -1, true)
 			peers[pid] = true
 	_party_worlds[mid] = {"game": g, "peers": peers}
 	_broadcast_snapshots()
@@ -283,8 +284,10 @@ func start_match_game(match_dict: Dictionary) -> void:
 # ------------------------------------------------------------- villes
 
 ## Attribue une capitale au joueur. Si zone_idx >= 0, le choix se limite a
-## cette zone physique (choix de zone de depart).
-func _assign_city(g: GameState, peer_id: int, zone_idx: int = -1) -> void:
+## cette zone physique (choix de zone de depart). Si close_spawn est vrai
+## (Parties VS), on REGROUPE les capitales pres du centre pour des batailles
+## rapides au lieu de les eloigner au maximum.
+func _assign_city(g: GameState, peer_id: int, zone_idx: int = -1, close_spawn: bool = false) -> void:
 	if g == null:
 		return
 	# Si le joueur possede deja une ville (reconnexion), on la lui rend.
@@ -293,17 +296,24 @@ func _assign_city(g: GameState, peer_id: int, zone_idx: int = -1) -> void:
 			c.revealed = true
 			g.node_changed.emit(c.id)
 			return
-	# Sinon : on attribue une ville NEUTRE LIBRE, la plus eloignee possible des
-	# villes des autres joueurs => chaque joueur apparait a un ENDROIT DISTINCT
-	# de la carte et peut voir les autres (pas de brouillard en multijoueur).
-	# Jamais une ville que quelqu'un possede deja (bug "meme perso" corrige).
 	var best: CityNode = null
 	var best_score := -INF
+	if close_spawn:
+		best_score = INF   # on va chercher le MINIMUM de distance au centre
 	for c: CityNode in g.cities:
 		if c.owner != CityNode.OWNER_NEUTRAL or c.controller != 0:
 			continue
 		if zone_idx >= 0 and g.zone_of(c) != zone_idx:
 			continue   # choix de zone : restreindre a cette zone
+		if close_spawn:
+			# VS : capitale au plus pres du centre => les joueurs se rencontrent vite.
+			var d0: float = c.map_pos.distance_to(Vector2.ZERO)
+			if d0 < best_score:
+				best_score = d0
+				best = c
+			continue
+		# Sinon (Tournoi) : on attribue une ville NEUTRE LIBRE, la plus eloignee
+		# possible des villes des autres joueurs => apparition DISTINCTE sur la carte.
 		var min_d := INF
 		var others := 0
 		for o: CityNode in g.cities:
@@ -326,7 +336,7 @@ func _assign_city(g: GameState, peer_id: int, zone_idx: int = -1) -> void:
 	best.controller = peer_id
 	best.revealed = true
 	g.node_changed.emit(best.id)
-	print("SERVER: %s attribuee au joueur %d (apparition distincte)." % [best.node_name, peer_id])
+	print("SERVER: %s attribuee au joueur %d (apparition %s)." % [best.node_name, peer_id, "regroupee VS" if close_spawn else "distincte"])
 
 
 # ------------------------------------------------------------- snapshots
