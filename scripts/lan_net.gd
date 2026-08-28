@@ -147,26 +147,41 @@ func real_peers() -> Array:
 ## action (no match to create): the VPS assigns you a capital and starts the
 ## persistent world.
 func join_tournament() -> void:
+	if not is_connected_to_room():
+		print("LanNet: join_tournament ignore (non connecte).")
+		return
 	_rpc_join_tournament.rpc_id(1, player_name)
 
 
 func create_match(match_name: String, m: String) -> void:
+	if not is_connected_to_room():
+		print("LanNet: create_match ignore (non connecte).")
+		return
 	_rpc_create_match.rpc_id(1, match_name, m, player_name)
 
 
 func join_match(match_id: int) -> void:
+	if not is_connected_to_room():
+		print("LanNet: join_match ignore (non connecte).")
+		return
 	_rpc_join_match.rpc_id(1, match_id, player_name)
 
 
 func leave_match() -> void:
+	if not is_connected_to_room():
+		return
 	_rpc_leave_match.rpc_id(1)
 
 
 func start_match() -> void:
+	if not is_connected_to_room():
+		return
 	_rpc_start_match.rpc_id(1)
 
 
 func request_matches() -> void:
+	if not is_connected_to_room():
+		return
 	_rpc_request_matches.rpc_id(1)
 
 

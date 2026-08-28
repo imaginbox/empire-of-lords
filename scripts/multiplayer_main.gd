@@ -747,16 +747,16 @@ func _show_info_bar() -> void:
 
 
 func _owner_name(d: Dictionary) -> String:
-	var owner := int(d.get("owner", 0))
+	var ownr := int(d.get("owner", 0))
 	var ctrl := int(d.get("controller", 0))
-	if owner == CityNode.OWNER_PLAYER:
+	if ownr == CityNode.OWNER_PLAYER:
 		if ctrl == _net.my_id():
 			return "Vous"
 		var names: Dictionary = _snap.get("names", {})
 		return str(names.get(ctrl, "Joueur %d" % ctrl))
-	if owner == CityNode.OWNER_ENEMY:
+	if ownr == CityNode.OWNER_ENEMY:
 		return "Ennemi"
-	if owner == CityNode.OWNER_ALLY:
+	if ownr == CityNode.OWNER_ALLY:
 		return "Allié"
 	return "Neutre"
 
@@ -831,7 +831,7 @@ func _recenter() -> void:
 		_clamp_camera()
 
 
-func _build_pause_menu(root: Control) -> void:
+func _build_pause_menu(_root: Control) -> void:
 	_pause_layer = CanvasLayer.new()
 	_pause_layer.name = "PauseLayer"
 	_pause_layer.layer = 30
@@ -880,7 +880,7 @@ func _toggle_pause() -> void:
 		_pause_layer.visible = _pause_visible
 
 
-func _build_help_menu(root: Control) -> void:
+func _build_help_menu(_root: Control) -> void:
 	_help_layer = CanvasLayer.new()
 	_help_layer.name = "HelpLayer"
 	_help_layer.layer = 35
