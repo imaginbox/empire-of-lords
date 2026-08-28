@@ -16,6 +16,7 @@ signal peer_joined(peer_id: int)
 signal peer_left(peer_id: int)
 signal match_list_changed(list: Array)   # emitted on the CLIENT with new list
 signal game_started(mode: String)        # emitted on the CLIENT: load the game scene
+signal chat_message(sender_name: String, text: String)   # emitted on the CLIENT
 
 ## Public VPS address (TLS terminated by nginx/caddy -> internal ws port).
 const SERVER_URL := "wss://195-35-24-169.sslip.io"
@@ -169,6 +170,14 @@ func request_matches() -> void:
 	_rpc_request_matches.rpc_id(1)
 
 
+## Send a chat message to the other players in your current party.
+func send_chat(text: String) -> void:
+	var t: String = text.strip_edges()
+	if t.is_empty():
+		return
+	_rpc_chat.rpc_id(1, t)
+
+
 ## Server-side helper: tell one client to load the game scene.
 func notify_game_start(pid: int, game_mode: String) -> void:
 	_rpc_game_start.rpc_id(pid, game_mode)
@@ -190,6 +199,14 @@ func _rpc_game_start(m: String) -> void:
 	if multiplayer.is_server():
 		return
 	game_started.emit(m)
+
+
+## Server relays a chat message to every player in the sender's party.
+@rpc("reliable")
+func _rpc_chat_msg(sender_name: String, text: String) -> void:
+	if multiplayer.is_server():
+		return
+	chat_message.emit(sender_name, text)
 
 
 # ------------------------------------------------------------- server-side matchmaking
@@ -257,6 +274,23 @@ func _rpc_request_matches() -> void:
 	if not multiplayer.is_server():
 		return
 	_rpc_match_list.rpc_id(multiplayer.get_remote_sender_id(), matches)
+
+
+## Server receives a chat message and relays it to the sender's party.
+@rpc("any_peer", "reliable")
+func _rpc_chat(text: String) -> void:
+	if not multiplayer.is_server():
+		return
+	var pid := multiplayer.get_remote_sender_id()
+	var m_id: int = _peer_match.get(pid, -1)
+	if m_id < 0:
+		return
+	var sname: String = get_peer_name(pid)
+	for match_dict in matches:
+		if match_dict["id"] == m_id:
+			for p: int in match_dict["players"]:
+				_rpc_chat_msg.rpc_id(p, sname, text)
+			return
 
 
 @rpc("any_peer", "reliable")

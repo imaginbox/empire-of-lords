@@ -1,12 +1,12 @@
 extends Control
-## Menu principal / Lobby.
+## Menu principal / Lobby — 3 choix :
 ##
-##   - SOLO            : la campagne hors-ligne.
-##   - TOURNOI OFFICIEL: le monde Conquete PERSISTANT cree par le serveur VPS.
-##                       Toujours disponible. On le REJOINT directement.
-##   - PARTIES         : des parties creees par les JOUEURS (nommees, listees
-##                       dans "parties en cours"). On en cree une, d'autres la
-##                       rejoignent, l'hote la demarre.
+##   1) SOLO             : campagne Conquete vs IA (sauvegarde, pause).
+##   2) PARTIES VS       : creer une partie (attente + chat) ou en rejoindre
+##                         une qui attend des joueurs. Partie rapide.
+##   3) LE JEU DE CONQUÊTE : monde PERSISTANT cree par l'ADMIN (le serveur
+##                         officiel du VPS). Il apparait dans une liste et on
+##                         le REJOINT. Contient tutoriel, saisons, course au Top.
 
 const SETTINGS_PATH := "user://settings.json"
 
@@ -15,10 +15,12 @@ var _status: Label
 var _list_box: VBoxContainer
 var _name_edit: LineEdit
 var _pseudo_edit: LineEdit
-var _mode_opt: OptionButton
 var _retry_btn: Button
 var _start_btn: Button
 var _quit_btn: Button
+var _chat_panel: PanelContainer
+var _chat_log: RichTextLabel
+var _chat_input: LineEdit
 var _in_match_id := -1
 var _am_host := false
 var _pseudo := ""
@@ -32,6 +34,7 @@ func _ready() -> void:
 		_net.set_player_name(_pseudo)
 		_net.match_list_changed.connect(_refresh_list)
 		_net.game_started.connect(_on_game_started)
+		_net.chat_message.connect(_on_chat_message)
 		_net.connected.connect(func(): _set_status("Connecté au serveur en tant que %s." % _pseudo))
 		_net.connection_failed.connect(_on_connection_failed)
 		_connect()
@@ -110,44 +113,57 @@ func _build() -> void:
 	add_child(center)
 
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(620, 660)
+	scroll.custom_minimum_size = Vector2(640, 680)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	center.add_child(scroll)
 
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 10)
-	vb.custom_minimum_size = Vector2(580, 0)
+	vb.custom_minimum_size = Vector2(600, 0)
 	scroll.add_child(vb)
 
-	var b_solo := _make_button("SOLO (campagne)", Color(0.2, 0.5, 0.25))
-	b_solo.custom_minimum_size = Vector2(0, 42)
+	# ================= 1) SOLO =================
+	vb.add_child(_section_label("1 · SOLO"))
+	var b_solo := _make_button("🎮  Jouer en Solo — Conquête vs IA (sauvegarde, pause)", Color(0.2, 0.5, 0.25))
+	b_solo.custom_minimum_size = Vector2(0, 46)
 	b_solo.pressed.connect(_on_solo)
 	vb.add_child(b_solo)
+	var note_s := Label.new()
+	note_s.text = "Campagne hors-ligne : conquérez les zones, développez votre royaume, "
+	note_s.text += "avec pause, vitesse et sauvegarde de progression."
+	note_s.add_theme_font_size_override("font_size", 12)
+	note_s.add_theme_color_override("font_color", Color(0.7, 0.78, 0.85))
+	note_s.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(note_s)
 
 	var sep := HSeparator.new()
 	vb.add_child(sep)
 
-	# ---------- TOURNOI OFFICIEL ----------
-	vb.add_child(_section_label("TOURNOI OFFICIEL (Conquête)"))
-	var b_tournament := _make_button("⚔  Rejoindre le Tournoi — le monde officiel", Color(0.55, 0.32, 0.15))
-	b_tournament.custom_minimum_size = Vector2(0, 48)
-	b_tournament.pressed.connect(func(): _net.call("join_tournament"))
-	vb.add_child(b_tournament)
-	var note_t := Label.new()
-	note_t.text = "Le Tournoi est le monde persistant et partagé créé par le serveur officiel. "
-	note_t.text += "Il tourne en continu (saisons, zones, course au Top) : vous le rejoignez à tout moment."
-	note_t.add_theme_font_size_override("font_size", 12)
-	note_t.add_theme_color_override("font_color", Color(0.7, 0.78, 0.85))
-	note_t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vb.add_child(note_t)
+	# ================= 2) PARTIES VS =================
+	vb.add_child(_section_label("2 · PARTIES VS"))
+	var note_v := Label.new()
+	note_v.text = "Parties rapides créées par les joueurs : créez-en une (attente + chat), "
+	note_v.text += "ou rejoignez une partie qui attend des joueurs."
+	note_v.add_theme_font_size_override("font_size", 12)
+	note_v.add_theme_color_override("font_color", Color(0.7, 0.78, 0.85))
+	note_v.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(note_v)
 
 	var sep2 := HSeparator.new()
 	vb.add_child(sep2)
 
-	# ---------- PARTIES DES JOUEURS ----------
-	vb.add_child(_section_label("PARTIES DES JOUEURS"))
+	# ================= 3) LE JEU DE CONQUÊTE (persistant) =================
+	vb.add_child(_section_label("3 · LE JEU DE CONQUÊTE (monde persistant)"))
+	var note_c := Label.new()
+	note_c.text = "Le monde persistant, créé par le serveur officiel (admin) et toujours actif. "
+	note_c.text += "Il contient le tutoriel, les saisons, les zones et la course au Top, en multijoueur. "
+	note_c.text += "Rejoignez-le depuis la liste ci-dessous."
+	note_c.add_theme_font_size_override("font_size", 12)
+	note_c.add_theme_color_override("font_color", Color(0.7, 0.78, 0.85))
+	note_c.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(note_c)
+	_add_conquest_row(vb)
 
-	# --- pseudo du joueur ---
 	var pseudo_row := HBoxContainer.new()
 	pseudo_row.add_theme_constant_override("separation", 6)
 	vb.add_child(pseudo_row)
@@ -176,7 +192,7 @@ func _build() -> void:
 	var cb := VBoxContainer.new()
 	cb.add_theme_constant_override("separation", 6)
 	create_panel.add_child(cb)
-	cb.add_child(_section_label("CRÉER UNE PARTIE"))
+	cb.add_child(_section_label("CRÉER UNE PARTIE VS"))
 
 	var name_row := HBoxContainer.new()
 	name_row.add_theme_constant_override("separation", 6)
@@ -187,34 +203,26 @@ func _build() -> void:
 	_name_edit.custom_minimum_size = Vector2(240, 30)
 	name_row.add_child(_name_edit)
 
-	var mode_row := HBoxContainer.new()
-	mode_row.add_theme_constant_override("separation", 6)
-	cb.add_child(mode_row)
-	mode_row.add_child(_field_label("Mode :"))
-	_mode_opt = OptionButton.new()
-	_mode_opt.add_item("Conquête (monde partagé)")
-	_mode_opt.add_item("VS (partie rapide)")
-	_mode_opt.selected = 0
-	mode_row.add_child(_mode_opt)
-
-	var b_create := _make_button("Créer la partie", Color(0.45, 0.3, 0.55))
+	var b_create := _make_button("Créer la partie VS", Color(0.45, 0.3, 0.55))
 	b_create.pressed.connect(_on_create)
 	cb.add_child(b_create)
 
-	vb.add_child(_section_label("PARTIES EN COURS"))
+	vb.add_child(_section_label("PARTIES VS EN COURS (en attente de joueurs)"))
 	_list_box = VBoxContainer.new()
 	_list_box.add_theme_constant_override("separation", 6)
 	vb.add_child(_list_box)
 
-	_start_btn = _make_button("Démarrer ma partie", Color(0.18, 0.5, 0.3))
+	_start_btn = _make_button("Démarrer la partie", Color(0.18, 0.5, 0.3))
 	_start_btn.pressed.connect(func(): _net.call("start_match"))
 	_start_btn.visible = false
 	vb.add_child(_start_btn)
 
-	_quit_btn = _make_button("Quitter ma partie", Color(0.5, 0.25, 0.25))
+	_quit_btn = _make_button("Quitter la partie", Color(0.5, 0.25, 0.25))
 	_quit_btn.pressed.connect(func(): _net.call("leave_match"))
 	_quit_btn.visible = false
 	vb.add_child(_quit_btn)
+
+	_build_chat(vb)
 
 	var version := Label.new()
 	version.text = "v1.0 · serveur officiel 195-35-24-169"
@@ -222,6 +230,49 @@ func _build() -> void:
 	version.add_theme_color_override("font_color", Color(0.5, 0.55, 0.6))
 	version.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	vb.add_child(version)
+
+
+func _add_conquest_row(parent: Node) -> void:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	var label := Label.new()
+	label.text = "🌐 Monde officiel — Conquête persistante (tutoriel, saisons, Top)"
+	label.custom_minimum_size = Vector2(420, 0)
+	label.add_theme_font_size_override("font_size", 14)
+	row.add_child(label)
+	var join := _make_button("Rejoindre", Color(0.55, 0.32, 0.15))
+	join.custom_minimum_size = Vector2(110, 36)
+	join.pressed.connect(func(): _net.call("join_tournament"))
+	row.add_child(join)
+	parent.add_child(row)
+
+
+func _build_chat(parent: Node) -> void:
+	_chat_panel = PanelContainer.new()
+	parent.add_child(_chat_panel)
+	var cb := VBoxContainer.new()
+	cb.add_theme_constant_override("separation", 6)
+	_chat_panel.add_child(cb)
+	cb.add_child(_section_label("💬 DISCUSSION DE LA PARTIE"))
+	_chat_log = RichTextLabel.new()
+	_chat_log.bbcode_enabled = false
+	_chat_log.custom_minimum_size = Vector2(0, 120)
+	_chat_log.scroll_following = true
+	_chat_log.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cb.add_child(_chat_log)
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 6)
+	cb.add_child(hb)
+	_chat_input = LineEdit.new()
+	_chat_input.placeholder_text = "Écrivez un message…"
+	_chat_input.custom_minimum_size = Vector2(0, 30)
+	_chat_input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_chat_input.text_submitted.connect(func(_t: String): _on_chat_send())
+	hb.add_child(_chat_input)
+	var send := _make_button("Envoyer", Color(0.18, 0.42, 0.55))
+	send.pressed.connect(_on_chat_send)
+	hb.add_child(send)
+	_chat_panel.visible = false
 
 
 func _section_label(text: String) -> Label:
@@ -266,10 +317,22 @@ func _on_create() -> void:
 	if name_text.is_empty():
 		_set_status("Donnez un nom à votre partie.")
 		return
-	var m: String = "conquest" if _mode_opt.selected == 0 else "vs"
-	_net.call("create_match", name_text, m)
-	_set_status("Partie « %s » créée — elle apparaît dans la liste." % name_text)
+	_net.call("create_match", name_text, "vs")
+	_set_status("Partie VS « %s » créée — elle apparaît dans la liste." % name_text)
 	_name_edit.text = ""
+
+
+func _on_chat_send() -> void:
+	var t: String = _chat_input.text
+	_net.call("send_chat", t)
+	_chat_input.text = ""
+
+
+func _on_chat_message(sender: String, text: String) -> void:
+	_chat_log.push_color(Color(0.55, 0.9, 1.0))
+	_chat_log.add_text(sender)
+	_chat_log.pop()
+	_chat_log.add_text(": %s\n" % text)
 
 
 func _refresh_list(list: Array) -> void:
@@ -278,17 +341,23 @@ func _refresh_list(list: Array) -> void:
 	_in_match_id = -1
 	_am_host = false
 	var me: int = _net.my_id() if _net != null else 0
-	if list.is_empty():
+	var vs_only: Array = []
+	for m in list:
+		if m.get("mode", "vs") == "vs":
+			vs_only.append(m)
+	if vs_only.is_empty():
 		var empty := Label.new()
-		empty.text = "Aucune partie en cours. Créez la première !"
+		empty.text = "Aucune partie VS en attente. Créez la première !"
 		empty.add_theme_color_override("font_color", Color(0.6, 0.65, 0.7))
 		_list_box.add_child(empty)
 	else:
-		for m in list:
+		for m in vs_only:
 			_list_box.add_child(_match_row(m, me))
 	var in_waiting: bool = _in_match_id > 0
 	_start_btn.visible = _am_host and in_waiting
 	_quit_btn.visible = _in_match_id > 0
+	if _chat_panel != null:
+		_chat_panel.visible = _in_match_id > 0
 
 
 func _match_row(m: Dictionary, me: int) -> Control:
@@ -296,10 +365,9 @@ func _match_row(m: Dictionary, me: int) -> Control:
 	row.add_theme_constant_override("separation", 8)
 	var p_count: int = (m.get("players") as Array).size()
 	var status_txt: String = " (en cours)" if m.get("status") == "running" else ""
-	var mode_txt: String = "Conquête" if m.get("mode") == "conquest" else "VS"
 	var host_name: String = str(m.get("host_name", "Joueur %d" % int(m.get("host", 0))))
 	var label := Label.new()
-	label.text = "%s [%s] — %d joueur(s)%s · par %s" % [m.get("name", "?"), mode_txt, p_count, status_txt, host_name]
+	label.text = "%s — %d joueur(s)%s · par %s" % [m.get("name", "?"), p_count, status_txt, host_name]
 	label.custom_minimum_size = Vector2(360, 0)
 	label.add_theme_font_size_override("font_size", 14)
 	row.add_child(label)
