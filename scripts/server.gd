@@ -46,9 +46,10 @@ func _ready() -> void:
 	# --- Tournoi persistant, toujours actif ---
 	game = GameState.new()
 	game.name = "GameState"
+	game.center_final = true   # conquete de l'exterieur vers le centre (zone finale au milieu)
 	add_child(game)
 	if game.load_from_file(SAVE_PATH):
-		print("SERVER: Tournoi repris depuis %s (saison %d, zone %d)." % [SAVE_PATH, game.season_number, game._zone_front + 1])
+		print("SERVER: Tournoi repris depuis %s (saison %d, zone %d)." % [SAVE_PATH, game.season_number, game.zone_physical(game._zone_front) + 1])
 	else:
 		game.end_peace()
 		print("SERVER: nouveau Tournoi cree.")
@@ -251,7 +252,7 @@ func _assign_city(g: GameState, peer_id: int) -> void:
 				if dd < min_d:
 					min_d = dd
 		var score: float = c.map_pos.distance_to(Vector2.ZERO) if others == 0 else min_d
-		if g.zone_of(c) <= g._zone_front:
+		if g.zone_position_of(c) <= g._zone_front:
 			score += 2000.0   # on prefere la zone actuelle (jouable)
 		if score > best_score:
 			best_score = score
@@ -283,7 +284,7 @@ func _build_snapshot(g: GameState) -> Dictionary:
 		army_arr.append({"id": army_arr.size(), "x": p.x, "y": p.y, "faction": a.faction})
 	var zname := ""
 	if g.zones.size() > 0 and g._zone_front < g.zones.size():
-		zname = str(g.zones[g._zone_front]["name"])
+		zname = str(g.zones[g.zone_physical(g._zone_front)]["name"])
 	var names := {}
 	for c: CityNode in g.cities:
 		if c.controller > 1 and not names.has(c.controller):

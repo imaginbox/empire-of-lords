@@ -159,7 +159,7 @@ func _assign_city(peer_id: int) -> void:
 	var best_d := INF
 	for c: CityNode in game.cities:
 		if c.owner == CityNode.OWNER_NEUTRAL and c.controller == 0 \
-				and game.zone_of(c) <= game._zone_front:
+				and game.zone_position_of(c) <= game._zone_front:
 			var d: float = c.map_pos.distance_to(Vector2.ZERO)
 			if d < best_d:
 				best_d = d
@@ -223,7 +223,7 @@ func _build_snapshot() -> Dictionary:
 	var zname := ""
 	var zlord := ""
 	if game.zones.size() > 0 and game._zone_front < game.zones.size():
-		var z: Dictionary = game.zones[game._zone_front]
+		var z: Dictionary = game.zones[game.zone_physical(game._zone_front)]
 		zname = z["name"]
 		zlord = z["lord"]
 	return {

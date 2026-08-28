@@ -66,10 +66,28 @@ var _ai_timer: float = 0.0
 # Zones: the evolving world (see WORLD_ZONES). `_zone_front` is the zone the
 # player is currently conquering; the next one is discovered once it's cleared.
 var zones: Array = []               # of {id, name, lord, lord_level, city_ids, unlocked}
-var _zone_front: int = 0            # index of the zone currently being conquered
+var _zone_front: int = 0            # progression index of the zone being conquered
 var _city_zone: Dictionary = {}     # city_id -> zone index
 var _reveal_timer: float = 0.0      # local fog-of-war proximity reveal cadence
 var _front_announced: bool = false  # true once the frontier-cleared toast fired
+# When true (Conquest persistent world), the frontier advances from the OUTER
+# zones INWARD, so the CENTER zone is the final one. Solo keeps center-outward.
+var center_final := false
+
+
+## Physical zone index for a progression index. In the Conquest world the
+## progression goes outer edge -> center (the final zone).
+func zone_physical(prog: int) -> int:
+	if center_final:
+		return WORLD_ZONES.size() - 1 - prog
+	return prog
+
+
+## Direction-aware position of a city along the conquest path: 0 is the START
+## zone (center for Solo, outer edge for Conquest) and it increases as you
+## advance toward the FINAL zone. Use this for all frontier comparisons.
+func zone_position_of(c: CityNode) -> int:
+	return zone_physical(zone_of(c))
 
 # Season state
 var season_number: int = 1
@@ -138,12 +156,12 @@ func _build_map() -> void:
 	for zi in range(WORLD_ZONES.size()):
 		var zdef: Dictionary = WORLD_ZONES[zi]
 		zones.append({"id": zi, "name": zdef["name"], "lord": zdef["lord"],
-			"lord_level": zdef["lord_level"], "city_ids": [], "unlocked": zi <= _zone_front})
+			"lord_level": zdef["lord_level"], "city_ids": [], "unlocked": zone_physical(zi) <= _zone_front})
 
 	for zi in range(WORLD_ZONES.size()):
 		var zdef: Dictionary = WORLD_ZONES[zi]
-		var conquered: bool = zi < _zone_front   # already won, behind the frontier
-		var is_front: bool = zi == _zone_front   # the live battle zone this season
+		var conquered: bool = zone_physical(zi) < _zone_front   # already won, behind the frontier
+		var is_front: bool = zone_physical(zi) == _zone_front   # the live battle zone this season
 		for spec in _zone_city_specs(zi, zdef):
 			var c := CityNode.new()
 			c.id = _next_id
@@ -219,7 +237,7 @@ func zone_of(c: CityNode) -> int:
 func _front_cleared() -> bool:
 	if _zone_front >= zones.size():
 		return true  # whole world conquered — nothing left to fight
-	var ids: Array = zones[_zone_front]["city_ids"]
+	var ids: Array = zones[zone_physical(_zone_front)]["city_ids"]
 	for cid in ids:
 		var c: CityNode = get_city(cid)
 		if c == null or not (c.owner == CityNode.OWNER_PLAYER or c.owner == CityNode.OWNER_ALLY):
@@ -233,7 +251,7 @@ func _update_reveals() -> void:
 	for c: CityNode in cities:
 		if c.revealed:
 			continue
-		if zone_of(c) > _zone_front:
+		if zone_position_of(c) > _zone_front:
 			continue  # locked land stays hidden
 		if c.owner == CityNode.OWNER_PLAYER or c.owner == CityNode.OWNER_ALLY:
 			c.revealed = true
@@ -284,7 +302,7 @@ func _tick(delta: float) -> void:
 	if not _front_announced and _zone_front < zones.size() and _front_cleared():
 		_front_announced = true
 		_add_log("🎉 Frontière %s conquise ! La saison va se terminer et vous serez promu."
-			% zones[_zone_front]["name"])
+			% zones[zone_physical(_zone_front)]["name"])
 
 
 func end_peace() -> void:
@@ -342,7 +360,7 @@ func _ai_tick(delta: float) -> void:
 		return
 	_ai_timer = 0.0
 	for c: CityNode in cities:
-		if c.owner == CityNode.OWNER_ENEMY and zone_of(c) <= _zone_front:
+		if c.owner == CityNode.OWNER_ENEMY and zone_position_of(c) <= _zone_front:
 			_ai_city_decide(c)
 
 
@@ -375,7 +393,7 @@ func _ai_pick_target(c: CityNode) -> CityNode:
 	for t: CityNode in cities:
 		if t.owner != CityNode.OWNER_PLAYER:
 			continue
-		if zone_of(t) > _zone_front:
+		if zone_position_of(t) > _zone_front:
 			continue
 		var score := c.map_pos.distance_to(t.map_pos) * 0.4 + float(t.garrison)
 		if score < best_score:
@@ -387,7 +405,7 @@ func _ai_pick_target(c: CityNode) -> CityNode:
 		for t: CityNode in cities:
 			if t.owner != CityNode.OWNER_NEUTRAL and t.owner != CityNode.OWNER_ALLY:
 				continue
-			if zone_of(t) > _zone_front:
+			if zone_position_of(t) > _zone_front:
 				continue
 			var d: float = c.map_pos.distance_to(t.map_pos)
 			if d < best_score:
@@ -428,7 +446,7 @@ func recruit_ally() -> bool:
 	for c: CityNode in cities:
 		if c.owner != CityNode.OWNER_NEUTRAL:
 			continue
-		if zone_of(c) > _zone_front:
+		if zone_position_of(c) > _zone_front:
 			continue  # never home an ally in undiscovered land
 		var d := c.map_pos.distance_to(Vector2.ZERO)
 		if d < best_d:
@@ -477,7 +495,7 @@ func _ai_pick_enemy(c: CityNode) -> CityNode:
 	for t: CityNode in cities:
 		if t.owner != CityNode.OWNER_ENEMY:
 			continue
-		if zone_of(t) > _zone_front:
+		if zone_position_of(t) > _zone_front:
 			continue
 		var d: float = c.map_pos.distance_to(t.map_pos)
 		if d < best_dist:
@@ -558,7 +576,7 @@ func launch_army(from_id: int, to_id: int, troops: int) -> Army:
 	if src.id == dst.id or not _hostile_to(src.owner, dst.owner):
 		return null
 	# Undiscovered land: you cannot send armies into a locked (hidden) zone.
-	if zone_of(src) > _zone_front or zone_of(dst) > _zone_front:
+	if zone_position_of(src) > _zone_front or zone_position_of(dst) > _zone_front:
 		return null
 	if not dst.revealed:
 		dst.revealed = true
@@ -701,7 +719,7 @@ func _end_season() -> void:
 	if cleared:
 		seasons_won += 1
 		if _zone_front < zones.size() - 1:
-			var cleared_name: String = zones[_zone_front]["name"]
+			var cleared_name: String = zones[zone_physical(_zone_front)]["name"]
 			_zone_front += 1
 			realm = mini(_zone_front, REALMS.size() - 1)
 			if realm > best_realm:
@@ -721,7 +739,7 @@ func _end_season() -> void:
 		realm_result = "Vous retombez au Royaume des Cendres. Recommencez l'ascension !"
 	else:
 		realm_result = "Vous restez au Royaume de %s. Conquérez la zone « %s » pour monter !" \
-			% [REALMS[realm], zones[_zone_front]["name"]]
+			% [REALMS[realm], zones[zone_physical(_zone_front)]["name"]]
 
 	_add_log("Saison %d terminée — rang %s (+%d gemmes)" % [season_number, RANKS[rank], reward])
 	# The tournament only lives at the top realm; falling below resets it.
@@ -757,7 +775,7 @@ func _reset_map(rank: int, realm_result: String) -> void:
 		for c: CityNode in cities:
 			if c.owner != CityNode.OWNER_NEUTRAL:
 				continue
-			if zone_of(c) > _zone_front:
+			if zone_position_of(c) > _zone_front:
 				continue
 			var dist := c.map_pos.distance_to(Vector2.ZERO)
 			if dist < best_d:
@@ -873,7 +891,7 @@ func from_dict(data: Dictionary) -> void:
 	for zi in range(WORLD_ZONES.size()):
 		var zdef: Dictionary = WORLD_ZONES[zi]
 		zones.append({"id": zi, "name": zdef["name"], "lord": zdef["lord"],
-			"lord_level": zdef["lord_level"], "city_ids": [], "unlocked": zi <= _zone_front})
+			"lord_level": zdef["lord_level"], "city_ids": [], "unlocked": zone_physical(zi) <= _zone_front})
 	for cd in (data.get("cities", []) as Array):
 		var c := CityNode.new()
 		c.id = int(cd["id"])
