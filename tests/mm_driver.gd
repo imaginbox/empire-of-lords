@@ -42,6 +42,7 @@ func _process(delta: float) -> bool:
 		lan.connect("connected", Callable(self, "_on_connected"))
 		lan.connect("match_list_changed", Callable(self, "_on_list"))
 		lan.connect("game_started", Callable(self, "_on_game_start"))
+		lan.connect("zone_choice_offered", Callable(self, "_on_zone_choice"))
 		lan.connect("connection_failed", Callable(self, "_on_fail"))
 		var err: int = int(lan.call("connect_to_server"))
 		print("DRIVER connect err=", err)
@@ -118,6 +119,12 @@ func _on_game_start(m: String) -> void:
 	print("DRIVER game_started mode=", m)
 	started_game = true
 	change_scene_to_file("res://scenes/Multiplayer.tscn")
+
+
+func _on_zone_choice(zones: Array) -> void:
+	print("DRIVER zone choice offered: ", zones.size(), " zones -> pick 0")
+	if not zones.is_empty():
+		lan.call("pick_zone", int(zones[0].get("index")))
 
 
 func _on_fail() -> void:

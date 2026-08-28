@@ -17,6 +17,8 @@ signal peer_left(peer_id: int)
 signal match_list_changed(list: Array)   # emitted on the CLIENT with new list
 signal game_started(mode: String)        # emitted on the CLIENT: load the game scene
 signal chat_message(sender_name: String, text: String)   # emitted on the CLIENT
+signal zone_choice_offered(zones: Array) # emitted on the CLIENT: pick a starting zone
+signal zone_choice_done                  # emitted on the CLIENT once the server accepted the pick
 
 ## Public VPS address (TLS terminated by nginx/caddy -> internal ws port).
 const SERVER_URL := "wss://195-35-24-169.sslip.io"
@@ -238,6 +240,34 @@ func _rpc_join_tournament(pname: String) -> void:
 	var main: Node = get_node_or_null("/root/Main")
 	if main != null and main.has_method("on_join_tournament"):
 		main.call("on_join_tournament", pid)
+
+## Server offers the list of available starting zones to a new player.
+func offer_zone_choice(peer_id: int, zones: Array) -> void:
+	_rpc_offer_zone_choice.rpc_id(peer_id, zones)
+
+## Client receives the zone choice offer -> lobby shows a picker.
+@rpc("reliable")
+func _rpc_offer_zone_choice(zones: Array) -> void:
+	if multiplayer.is_server():
+		return
+	zone_choice_offered.emit(zones)
+
+## Client tells the server which starting zone they picked.
+func pick_zone(zone_index: int) -> void:
+	if not is_connected_to_room():
+		print("LanNet: pick_zone ignore (non connecte).")
+		return
+	_rpc_pick_zone.rpc_id(1, zone_index)
+
+## Server receives the player's zone pick -> assigns their capital there.
+@rpc("any_peer", "reliable")
+func _rpc_pick_zone(zone_index: int) -> void:
+	if not multiplayer.is_server():
+		return
+	var pid := multiplayer.get_remote_sender_id()
+	var main: Node = get_node_or_null("/root/Main")
+	if main != null and main.has_method("on_pick_zone"):
+		main.call("on_pick_zone", pid, zone_index)
 
 ## Server receives a request to create a named match.
 @rpc("any_peer", "reliable")

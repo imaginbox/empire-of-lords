@@ -27,6 +27,7 @@ var _save_timer := 0.0
 var _last_rankings: Array = []
 var _winner_announced := false
 var _toast := ""
+var _pending_choice: Dictionary = {}   # pid -> true (attend le choix de zone)
 
 
 func _ready() -> void:
@@ -118,6 +119,7 @@ func _on_peer_left(peer_id: int) -> void:
 		return
 	_tournament_peers.erase(peer_id)
 	_ready_peers.erase(peer_id)
+	_pending_choice.erase(peer_id)
 	for wid in _party_worlds.keys():
 		var w: Dictionary = _party_worlds[wid]
 		w.peers.erase(peer_id)
@@ -145,11 +147,66 @@ func _world_of(peer_id: int) -> Dictionary:
 func on_join_tournament(peer_id: int) -> void:
 	if game == null or peer_id <= 1:
 		return
-	_assign_city(game, peer_id)
 	_tournament_peers[peer_id] = true
+	# Reconnexion : le joueur a deja une capitale -> on la lui rend, pas de choix.
+	if _peer_has_capital(peer_id):
+		_assign_city(game, peer_id)
+		_net.call("notify_game_start", peer_id, "conquest")
+		_broadcast_snapshots()
+		print("SERVER: player %d a rejoint le Tournoi (capitale existante)." % peer_id)
+		return
+	# Nouveau joueur : on lui propose de choisir sa zone de depart.
+	var zones := _available_zones()
+	if zones.is_empty():
+		_assign_city(game, peer_id)   # fallback : aucune zone libre
+		_net.call("notify_game_start", peer_id, "conquest")
+		_broadcast_snapshots()
+		print("SERVER: player %d a rejoint (aucune zone libre, capitale auto)." % peer_id)
+		return
+	_pending_choice[peer_id] = true
+	_net.call("offer_zone_choice", peer_id, zones)
+	print("SERVER: player %d -> choix de zone (%d zones)." % [peer_id, zones.size()])
+
+
+## True si le joueur possede deja une capitale dans le Tournoi.
+func _peer_has_capital(peer_id: int) -> bool:
+	for c: CityNode in game.cities:
+		if c.owner == CityNode.OWNER_PLAYER and c.controller == peer_id:
+			return true
+	return false
+
+
+## Zones jouables (frontiere comprise) ayant au moins une ville neutre libre.
+func _available_zones() -> Array:
+	var out: Array = []
+	for zi in range(game.zones.size()):
+		if game.zone_physical(zi) > game._zone_front:
+			continue
+		var free := 0
+		for c: CityNode in game.cities:
+			if game.zone_of(c) == zi and c.owner == CityNode.OWNER_NEUTRAL and c.controller == 0:
+				free += 1
+		if free > 0:
+			out.append({"index": zi, "name": str(game.zones[zi]["name"]), "free": free})
+	return out
+
+
+## Appele par LanNet quand le joueur a choisi sa zone de depart.
+func on_pick_zone(peer_id: int, zone_index: int) -> void:
+	if game == null or peer_id <= 1:
+		return
+	_pending_choice.erase(peer_id)
+	var ok := false
+	for zi in range(game.zones.size()):
+		if zi == zone_index and game.zone_physical(zi) <= game._zone_front:
+			ok = true
+	if ok:
+		_assign_city(game, peer_id, zone_index)
+	else:
+		_assign_city(game, peer_id)   # fallback si zone invalide
 	_net.call("notify_game_start", peer_id, "conquest")
 	_broadcast_snapshots()
-	print("SERVER: player %d a rejoint le Tournoi officiel." % peer_id)
+	print("SERVER: player %d a choisi la zone %d." % [peer_id, zone_index])
 
 
 func _on_season_ended(_rank: int, _gems: int, _realm: int, _res: String) -> void:
@@ -225,7 +282,9 @@ func start_match_game(match_dict: Dictionary) -> void:
 
 # ------------------------------------------------------------- villes
 
-func _assign_city(g: GameState, peer_id: int) -> void:
+## Attribue une capitale au joueur. Si zone_idx >= 0, le choix se limite a
+## cette zone physique (choix de zone de depart).
+func _assign_city(g: GameState, peer_id: int, zone_idx: int = -1) -> void:
 	if g == null:
 		return
 	# Si le joueur possede deja une ville (reconnexion), on la lui rend.
@@ -243,6 +302,8 @@ func _assign_city(g: GameState, peer_id: int) -> void:
 	for c: CityNode in g.cities:
 		if c.owner != CityNode.OWNER_NEUTRAL or c.controller != 0:
 			continue
+		if zone_idx >= 0 and g.zone_of(c) != zone_idx:
+			continue   # choix de zone : restreindre a cette zone
 		var min_d := INF
 		var others := 0
 		for o: CityNode in g.cities:

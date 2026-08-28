@@ -24,17 +24,21 @@ var _chat_input: LineEdit
 var _in_match_id := -1
 var _am_host := false
 var _pseudo := ""
+var _zone_layer: CanvasLayer
+var _zone_box: VBoxContainer
 
 
 func _ready() -> void:
 	_net = get_node_or_null("/root/LanNet")
 	_load_settings()
 	_build()
+	_build_zone_picker()
 	if _net != null:
 		_net.set_player_name(_pseudo)
 		_net.match_list_changed.connect(_refresh_list)
 		_net.game_started.connect(_on_game_started)
 		_net.chat_message.connect(_on_chat_message)
+		_net.zone_choice_offered.connect(_on_zone_choice_offered)
 		_net.connected.connect(func(): _set_status("Connecté au serveur en tant que %s." % _pseudo))
 		_net.connection_failed.connect(_on_connection_failed)
 		_connect()
@@ -390,4 +394,68 @@ func _match_row(m: Dictionary, me: int) -> Control:
 
 func _on_game_started(_m: String) -> void:
 	print("LOBBY: partie démarrée — lancement du monde.")
+	if _zone_layer != null:
+		_zone_layer.visible = false
 	get_tree().change_scene_to_file("res://scenes/Multiplayer.tscn")
+
+
+# ------------------------------------------------------------- choix de zone
+
+func _build_zone_picker() -> void:
+	_zone_layer = CanvasLayer.new()
+	_zone_layer.name = "ZonePicker"
+	_zone_layer.layer = 50
+	add_child(_zone_layer)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.82)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	_zone_layer.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_zone_layer.add_child(center)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(520, 0)
+	center.add_child(panel)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 10)
+	panel.add_child(vb)
+	var title := Label.new()
+	title.text = "🏰 Choisissez votre zone de départ"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 24)
+	vb.add_child(title)
+	var note := Label.new()
+	note.text = "Votre royaume commence dans la zone que vous choisissez. "
+	note.text += "La conquête progresse vers le CENTRE de la carte : la zone du milieu est la finale, "
+	note.text += "où se décidera le vainqueur ultime de la saison !"
+	note.add_theme_font_size_override("font_size", 13)
+	note.add_theme_color_override("font_color", Color(0.8, 0.85, 0.9))
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(note)
+	_zone_box = VBoxContainer.new()
+	_zone_box.add_theme_constant_override("separation", 6)
+	vb.add_child(_zone_box)
+	_zone_layer.visible = false
+
+
+func _on_zone_choice_offered(zones: Array) -> void:
+	if _zone_box == null:
+		return
+	for ch in _zone_box.get_children():
+		ch.queue_free()
+	for z in zones:
+		var btn := _make_button("⚔ %s  —  %d ville(s) libres" % [str(z["name"]), int(z["free"])],
+			Color(0.35, 0.2, 0.1))
+		btn.custom_minimum_size = Vector2(0, 36)
+		var zi: int = int(z["index"])
+		btn.pressed.connect(func(): _pick_zone(zi))
+		_zone_box.add_child(btn)
+	_zone_layer.visible = true
+	_set_status("Choisissez votre zone de départ 🏰")
+
+
+func _pick_zone(zone_index: int) -> void:
+	_zone_layer.visible = false
+	_set_status("Zone choisie — entrée dans le monde officiel…")
+	_net.call("pick_zone", zone_index)

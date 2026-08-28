@@ -24,6 +24,7 @@ func _process(delta: float) -> bool:
 			quit(1)
 			return true
 		lan.connect("connected", Callable(self, "_on_connected"))
+		lan.connect("zone_choice_offered", Callable(self, "_on_zone_choice"))
 		lan.set_player_name("VainqueurTest")
 		lan.call("connect_to_server")
 		return false
@@ -37,3 +38,9 @@ func _process(delta: float) -> bool:
 func _on_connected() -> void:
 	print("WAIT connected")
 	lan.call("join_tournament")
+
+
+func _on_zone_choice(zones: Array) -> void:
+	print("WAIT zone choice offered: ", zones.size(), " zones -> pick 0")
+	if not zones.is_empty():
+		lan.call("pick_zone", int(zones[0].get("index")))
