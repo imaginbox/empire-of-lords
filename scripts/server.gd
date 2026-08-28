@@ -48,6 +48,7 @@ func _ready() -> void:
 
 	set_multiplayer_authority(1)
 	game.season_ended.connect(_on_season_ended)
+	_net.peer_left.connect(_on_peer_left)
 	print("SERVER: ready. Waiting for players…")
 
 
@@ -190,8 +191,9 @@ func _broadcast_snapshot() -> void:
 	if _game_peers.is_empty():
 		return
 	var snap: Dictionary = _build_snapshot()
+	var known: PackedInt32Array = multiplayer.get_peers()
 	for pid in _game_peers:
-		if int(pid) > 1:
+		if int(pid) > 1 and int(pid) in known:
 			_recv_snapshot.rpc_id(int(pid), snap)
 
 

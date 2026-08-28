@@ -259,7 +259,9 @@ func _start_match(match_dict: Dictionary) -> void:
 
 
 func _push_match_list() -> void:
-	_rpc_match_list.rpc(matches)
+	for pid in multiplayer.get_peers():
+		if int(pid) > 1:
+			_rpc_match_list.rpc_id(int(pid), matches)
 
 
 func _on_peer_connected(id: int) -> void:
