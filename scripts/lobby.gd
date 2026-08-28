@@ -376,12 +376,9 @@ func _match_row(m: Dictionary, me: int) -> Control:
 	label.add_theme_font_size_override("font_size", 14)
 	row.add_child(label)
 
-	if m.get("status") == "waiting" and me > 0 and int(m.get("id")) != _in_match_id:
-		var join := _make_button("Rejoindre", Color(0.18, 0.42, 0.55))
-		var m_id: int = int(m.get("id"))
-		join.pressed.connect(func(): _net.call("join_match", m_id))
-		row.add_child(join)
-	elif me > 0 and m.get("players") != null and me in (m.get("players") as Array):
+	if me > 0 and m.get("players") != null and me in (m.get("players") as Array):
+		# Le joueur est DEJA dans cette partie (créateur ou membre) : salle d'attente,
+		# pas de bouton "Rejoindre" sur sa propre partie.
 		var tag := Label.new()
 		tag.text = "✦ vous êtes ici"
 		tag.add_theme_color_override("font_color", Color(0.5, 1, 0.6))
@@ -389,6 +386,11 @@ func _match_row(m: Dictionary, me: int) -> Control:
 		_in_match_id = int(m.get("id"))
 		if m.get("host") == me:
 			_am_host = true
+	elif m.get("status") == "waiting" and me > 0 and int(m.get("id")) != _in_match_id:
+		var join := _make_button("Rejoindre", Color(0.18, 0.42, 0.55))
+		var m_id: int = int(m.get("id"))
+		join.pressed.connect(func(): _net.call("join_match", m_id))
+		row.add_child(join)
 	return row
 
 

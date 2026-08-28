@@ -17,7 +17,7 @@ var _army_nodes := {}          # army (instance) -> Node2D
 var source_city: CityNode = null
 var target_city: CityNode = null
 
-const MIN_ZOOM := 0.55
+const MIN_ZOOM := 0.10
 const MAX_ZOOM := 2.2
 const PAN_SPEED := 850.0
 const WORLD_LIMIT := 2700.0   # outer edge of the 4-zone evolving world

@@ -15,7 +15,7 @@ const TX_ALLY := preload("res://assets/generated/city_ally.png")
 const TX_ARMY := preload("res://assets/generated/army_marker.png")
 
 const SNAPSHOT_INTERVAL := 0.12
-const MIN_ZOOM := 0.55
+const MIN_ZOOM := 0.10
 const MAX_ZOOM := 2.2
 const PAN_SPEED := 850.0
 const WORLD_LIMIT := 4300.0

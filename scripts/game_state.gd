@@ -45,15 +45,17 @@ const ZONE0_LAYOUT := [
 	{"name": "Croisé",      "pos": Vector2(-80, -260),  "owner": CityNode.OWNER_NEUTRAL,"level": 2},
 	{"name": "Tour-Nord",   "pos": Vector2(140, -300),  "owner": CityNode.OWNER_NEUTRAL,"level": 1},
 	{"name": "Ferme-Lointaine", "pos": Vector2(180, 300), "owner": CityNode.OWNER_NEUTRAL,"level": 1},
+	{"name": "Brume",       "pos": Vector2(-170, 400),  "owner": CityNode.OWNER_NEUTRAL,"level": 1},
+	{"name": "Halte-Midi",  "pos": Vector2(330, -340),  "owner": CityNode.OWNER_NEUTRAL,"level": 1},
 ]
 
 const WORLD_ZONES := [
 	{"name": "Le Cœur des Cendres",  "lord": "",               "lord_level": 0,  "count": 8,  "r_min": 0.0,   "r_max": 560.0,  "lord_cities": 0},
-	{"name": "Les Marches du Duc",   "lord": "Duc Eldric",     "lord_level": 6,  "count": 7,  "r_min": 950.0,  "r_max": 1350.0, "lord_cities": 2},
-	{"name": "Le Duché de Veyra",    "lord": "Comtesse Veyra", "lord_level": 9,  "count": 8,  "r_min": 1550.0, "r_max": 2050.0, "lord_cities": 3},
-	{"name": "Le Royaume de Maldur", "lord": "Roi Maldur",     "lord_level": 12, "count": 9,  "r_min": 2200.0, "r_max": 2700.0, "lord_cities": 3},
-	{"name": "Les Terres Sacrées",   "lord": "Reine des Cendres", "lord_level": 14, "count": 10, "r_min": 2850.0, "r_max": 3400.0, "lord_cities": 4},
-	{"name": "La Couronne Déchue",   "lord": "Dragonlord",     "lord_level": 16, "count": 11, "r_min": 3550.0, "r_max": 4100.0, "lord_cities": 5},
+	{"name": "Les Marches du Duc",   "lord": "Duc Eldric",     "lord_level": 6,  "count": 10, "r_min": 950.0,  "r_max": 1350.0, "lord_cities": 2},
+	{"name": "Le Duché de Veyra",    "lord": "Comtesse Veyra", "lord_level": 9,  "count": 12, "r_min": 1550.0, "r_max": 2050.0, "lord_cities": 3},
+	{"name": "Le Royaume de Maldur", "lord": "Roi Maldur",     "lord_level": 12, "count": 14, "r_min": 2200.0, "r_max": 2700.0, "lord_cities": 3},
+	{"name": "Les Terres Sacrées",   "lord": "Reine des Cendres", "lord_level": 14, "count": 16, "r_min": 2850.0, "r_max": 3400.0, "lord_cities": 4},
+	{"name": "La Couronne Déchue",   "lord": "Dragonlord",     "lord_level": 16, "count": 18, "r_min": 3550.0, "r_max": 4100.0, "lord_cities": 5},
 ]
 
 var time: float = 0.0
