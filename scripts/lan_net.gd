@@ -154,8 +154,8 @@ func request_matches() -> void:
 
 
 ## Server-side helper: tell one client to load the game scene.
-func notify_game_start(pid: int, mode: String) -> void:
-	_rpc_game_start.rpc_id(pid, mode)
+func notify_game_start(pid: int, game_mode: String) -> void:
+	_rpc_game_start.rpc_id(pid, game_mode)
 
 
 # --- client-side RPC receivers ---

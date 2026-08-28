@@ -49,7 +49,7 @@ func _build() -> void:
 	title.add_theme_constant_override("outline_size", 6)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	title.position = Vector2(0, 16)
+	title.position = Vector2(0, 30)
 	title.size = Vector2(0, 46)
 	add_child(title)
 
