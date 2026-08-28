@@ -483,7 +483,9 @@ func _on_map_click(screen_pos: Vector2) -> void:
 			target_id = id
 			_show_info_bar()
 	elif source_id != -1:
-		if hit["owner"] == CityNode.OWNER_PLAYER:
+		# Seule SA PROPRE ville (même controller) est "amie". En VS, la ville d'un
+		# autre joueur est OWNER_PLAYER mais de controller différent : ennemie.
+		if hit["owner"] == CityNode.OWNER_PLAYER and int(hit.get("controller", 0)) == _net.my_id():
 			_show_toast("Cité amie — choisissez une cible ennemie.")
 			_clear_selection()
 		else:

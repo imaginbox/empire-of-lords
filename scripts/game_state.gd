@@ -575,7 +575,14 @@ func launch_army(from_id: int, to_id: int, troops: int) -> Army:
 		return null
 	# No self-attack and no friendly-fire: a faction can never attack its own
 	# cities, and the player/ally alliance can never attack each other.
-	if src.id == dst.id or not _hostile_to(src.owner, dst.owner):
+	if src.id == dst.id:
+		return null
+	if src.owner == CityNode.OWNER_PLAYER and dst.owner == CityNode.OWNER_PLAYER:
+		# En VS, deux joueurs DIFFERENTS sont ennemis (free-for-all) ; un meme
+		# joueur ne peut pas s'auto-attaquer (meme controller).
+		if src.controller == dst.controller:
+			return null
+	elif not _hostile_to(src.owner, dst.owner):
 		return null
 	# Undiscovered land: you cannot send armies into a locked (hidden) zone.
 	if zone_position_of(src) > _zone_front or zone_position_of(dst) > _zone_front:
