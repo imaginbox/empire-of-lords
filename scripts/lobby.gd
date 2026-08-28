@@ -16,7 +16,11 @@ var _list_box: VBoxContainer
 var _name_edit: LineEdit
 var _pseudo_edit: LineEdit
 var _retry_btn: Button
-var _start_btn: Button
+var _ready_btn: Button
+var _roster: Label
+var _ready_state := false
+var _with_ai_btn: CheckButton
+var _my_match: Dictionary = {}
 var _quit_btn: Button
 var _chat_panel: PanelContainer
 var _chat_log: RichTextLabel
@@ -207,6 +211,11 @@ func _build() -> void:
 	_name_edit.custom_minimum_size = Vector2(240, 30)
 	name_row.add_child(_name_edit)
 
+	_with_ai_btn = CheckButton.new()
+	_with_ai_btn.text = "  Avec IA (seigneurs ennemis attaquent aussi)"
+	_with_ai_btn.button_pressed = true
+	cb.add_child(_with_ai_btn)
+
 	var b_create := _make_button("Créer la partie VS", Color(0.45, 0.3, 0.55))
 	b_create.pressed.connect(_on_create)
 	cb.add_child(b_create)
@@ -216,10 +225,17 @@ func _build() -> void:
 	_list_box.add_theme_constant_override("separation", 6)
 	vb.add_child(_list_box)
 
-	_start_btn = _make_button("Démarrer la partie", Color(0.18, 0.5, 0.3))
-	_start_btn.pressed.connect(func(): _net.call("start_match"))
-	_start_btn.visible = false
-	vb.add_child(_start_btn)
+	_roster = Label.new()
+	_roster.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_roster.add_theme_font_size_override("font_size", 13)
+	_roster.add_theme_color_override("font_color", Color(0.8, 0.9, 0.85))
+	_roster.visible = false
+	vb.add_child(_roster)
+
+	_ready_btn = _make_button("PRÊT", Color(0.2, 0.5, 0.35))
+	_ready_btn.pressed.connect(_on_ready_toggle)
+	_ready_btn.visible = false
+	vb.add_child(_ready_btn)
 
 	_quit_btn = _make_button("Quitter la partie", Color(0.5, 0.25, 0.25))
 	_quit_btn.pressed.connect(func(): _net.call("leave_match"))
@@ -321,9 +337,30 @@ func _on_create() -> void:
 	if name_text.is_empty():
 		_set_status("Donnez un nom à votre partie.")
 		return
-	_net.call("create_match", name_text, "vs")
+	_net.call("create_match", name_text, "vs", _with_ai_btn.button_pressed)
 	_set_status("Partie VS « %s » créée — elle apparaît dans la liste." % name_text)
 	_name_edit.text = ""
+
+
+func _on_ready_toggle() -> void:
+	_ready_state = not _ready_state
+	_ready_btn.text = "PAS PRÊT" if _ready_state else "PRÊT"
+	_ready_btn.modulate = Color(0.9, 0.5, 0.4) if _ready_state else Color.WHITE
+	_net.call("set_ready", _ready_state)
+
+
+func _build_roster() -> void:
+	var txt := "👥 Salle d'attente :\n"
+	var players: Array = _my_match.get("players", [])
+	var names: Dictionary = _my_match.get("names", {})
+	var rdy_map: Dictionary = _my_match.get("ready", {})
+	var me: int = _net.my_id() if _net != null else 0
+	for p: int in players:
+		var nm: String = str(names.get(p, "Joueur %d" % p))
+		var r: String = "✔ PRÊT" if bool(rdy_map.get(p, false)) else "… en attente"
+		txt += "  • %s — %s%s\n" % [nm, r, "  (vous)" if p == me else ""]
+	txt += "\nLa partie démarre à 4/4 (auto) ou dès que tout le monde est prêt (2+)."
+	_roster.text = txt
 
 
 func _on_chat_send() -> void:
@@ -358,10 +395,13 @@ func _refresh_list(list: Array) -> void:
 		for m in vs_only:
 			_list_box.add_child(_match_row(m, me))
 	var in_waiting: bool = _in_match_id > 0
-	_start_btn.visible = _am_host and in_waiting
-	_quit_btn.visible = _in_match_id > 0
+	_ready_btn.visible = in_waiting
+	_quit_btn.visible = in_waiting
+	_roster.visible = in_waiting
+	if in_waiting:
+		_build_roster()
 	if _chat_panel != null:
-		_chat_panel.visible = _in_match_id > 0
+		_chat_panel.visible = in_waiting
 
 
 func _match_row(m: Dictionary, me: int) -> Control:
@@ -384,6 +424,7 @@ func _match_row(m: Dictionary, me: int) -> Control:
 		tag.add_theme_color_override("font_color", Color(0.5, 1, 0.6))
 		row.add_child(tag)
 		_in_match_id = int(m.get("id"))
+		_my_match = m
 		if m.get("host") == me:
 			_am_host = true
 	elif m.get("status") == "waiting" and me > 0 and int(m.get("id")) != _in_match_id:

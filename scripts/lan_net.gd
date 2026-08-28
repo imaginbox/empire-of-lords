@@ -18,6 +18,7 @@ signal match_list_changed(list: Array)   # emitted on the CLIENT with new list
 signal game_started(mode: String)        # emitted on the CLIENT: load the game scene
 signal chat_message(sender_name: String, text: String)   # emitted on the CLIENT
 signal zone_choice_offered(zones: Array) # emitted on the CLIENT: pick a starting zone
+signal vs_eliminated              # emitted on the CLIENT: this player is out of a VS match
 
 ## Public VPS address (TLS terminated by nginx/caddy -> internal ws port).
 const SERVER_URL := "wss://195-35-24-169.sslip.io"
@@ -154,11 +155,19 @@ func join_tournament() -> void:
 	_rpc_join_tournament.rpc_id(1, player_name)
 
 
-func create_match(match_name: String, m: String) -> void:
+func create_match(match_name: String, m: String, with_ai: bool = false) -> void:
 	if not is_connected_to_room():
 		print("LanNet: create_match ignore (non connecte).")
 		return
-	_rpc_create_match.rpc_id(1, match_name, m, player_name)
+	_rpc_create_match.rpc_id(1, match_name, m, player_name, with_ai)
+
+
+## Tell the server this player toggled their ready state in their VS match.
+## The match starts automatically when full (4/4) or when everyone is ready.
+func set_ready(is_ready: bool) -> void:
+	if not is_connected_to_room():
+		return
+	_rpc_set_ready.rpc_id(1, is_ready)
 
 
 func join_match(match_id: int) -> void:
@@ -270,7 +279,7 @@ func _rpc_pick_zone(zone_index: int) -> void:
 
 ## Server receives a request to create a named match.
 @rpc("any_peer", "reliable")
-func _rpc_create_match(match_name: String, m: String, creator_name: String) -> void:
+func _rpc_create_match(match_name: String, m: String, creator_name: String, with_ai: bool = false) -> void:
 	if not multiplayer.is_server():
 		return
 	var pid := multiplayer.get_remote_sender_id()
@@ -280,12 +289,14 @@ func _rpc_create_match(match_name: String, m: String, creator_name: String) -> v
 		"id": _next_match_id, "name": match_name, "mode": m,
 		"host": pid, "players": [pid], "status": "waiting",
 		"host_name": get_peer_name(pid),
+		"max": 4, "with_ai": with_ai, "ready": {pid: false},
+		"names": {pid: get_peer_name(pid)},
 	}
 	_next_match_id += 1
 	matches.append(match_dict)
 	_peer_match[pid] = match_dict["id"]
 	_push_match_list()
-	print("SERVER: player %d (%s) created match \"%s\" (%s)." % [pid, get_peer_name(pid), match_name, m])
+	print("SERVER: player %d (%s) created match \"%s\" (%s, with_ai=%s)." % [pid, get_peer_name(pid), match_name, m, with_ai])
 
 
 @rpc("any_peer", "reliable")
@@ -300,8 +311,13 @@ func _rpc_join_match(match_id: int, pname: String) -> void:
 			if pid not in match_dict["players"]:
 				match_dict["players"].append(pid)
 				_peer_match[pid] = match_id
+				match_dict["ready"][pid] = false
+				match_dict["names"][pid] = get_peer_name(pid)
+			print("SERVER: player %d joined match %d (%d/%d)." % [pid, match_id, match_dict["players"].size(), match_dict["max"]])
 			_push_match_list()
-			print("SERVER: player %d joined match %d." % [pid, match_id])
+			# Full house (4/4) -> start immediately.
+			if match_dict["players"].size() >= int(match_dict["max"]):
+				_start_match(match_dict)
 			return
 
 
@@ -347,6 +363,72 @@ func _rpc_start_match() -> void:
 		if match_dict["id"] == m_id and match_dict["host"] == pid:
 			_start_match(match_dict)
 			return
+
+
+## Toggle this player's ready flag; auto-start when full or all ready.
+@rpc("any_peer", "reliable")
+func _rpc_set_ready(is_ready: bool) -> void:
+	if not multiplayer.is_server():
+		return
+	var pid := multiplayer.get_remote_sender_id()
+	var m_id: int = _peer_match.get(pid, -1)
+	for match_dict in matches:
+		if match_dict["id"] == m_id:
+			if not match_dict.has("ready"):
+				match_dict["ready"] = {}
+			match_dict["ready"][pid] = is_ready
+			_push_match_list()
+			_check_auto_start(match_dict)
+			return
+
+
+func _check_auto_start(match_dict: Dictionary) -> void:
+	if match_dict["status"] != "waiting":
+		return
+	# Start when the room is full, or when every connected player is ready.
+	var full: bool = match_dict["players"].size() >= int(match_dict["max"])
+	var all_ready: bool = true
+	var rdy_map: Dictionary = match_dict.get("ready", {})
+	for p: int in match_dict["players"]:
+		if not bool(rdy_map.get(p, false)):
+			all_ready = false
+			break
+	# Il faut au moins 2 joueurs pour demarrer sur "tous prets".
+	if full or (all_ready and match_dict["players"].size() >= 2):
+		print("SERVER: match %d auto-starts (full=%s all_ready=%s)." % [match_dict["id"], full, all_ready])
+		_start_match(match_dict)
+
+
+## Server helper: tell one client they are eliminated from a VS match.
+func rpc_vs_eliminated(pid: int) -> void:
+	if multiplayer.is_server() and _peer_connected(pid):
+		_rpc_vs_eliminated.rpc_id(pid)
+
+
+@rpc("reliable")
+func _rpc_vs_eliminated() -> void:
+	if multiplayer.is_server():
+		return
+	vs_eliminated.emit()
+
+
+## Server helper: fully close a running VS match (winner decided / aborted),
+## freeing its players back to the lobby and refreshing the list.
+func close_match(m_id: int) -> void:
+	if not multiplayer.is_server():
+		return
+	for match_dict in matches:
+		if match_dict["id"] == m_id:
+			for p: int in match_dict["players"]:
+				if _peer_match.get(p, -1) == m_id:
+					_peer_match.erase(p)
+			matches.erase(match_dict)
+			break
+	_push_match_list()
+
+
+func _peer_connected(pid: int) -> bool:
+	return int(pid) in multiplayer.get_peers()
 
 
 func _remove_from_match(pid: int) -> void:

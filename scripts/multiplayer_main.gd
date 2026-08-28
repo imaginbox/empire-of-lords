@@ -25,6 +25,8 @@ var _is_host := false
 var _net: Node = null             # /root/LanNet autoload (resolved at runtime)
 
 # Client-side snapshot state.
+var _vs_handled := false      # VS end-of-match already processed
+var _vs_returning := false    # a lobby return is already scheduled
 var _snap: Dictionary = {}
 var _has_snap := false
 
@@ -85,6 +87,8 @@ func _start_net() -> void:
 		get_tree().change_scene_to_file("res://scenes/Lobby.tscn")
 		return
 	_net.connection_failed.connect(_on_net_failed)
+	if _net.has_signal("vs_eliminated"):
+		_net.vs_eliminated.connect(_on_vs_eliminated)
 	if not _net.is_connected_to_room():
 		_show_toast("Connexion au monde…")
 		await _net.connected
@@ -367,6 +371,10 @@ func _render_snap() -> void:
 	var toast_str: String = str(_snap.get("toast", ""))
 	if toast_str != "":
 		_show_toast(toast_str)
+	# Fin de partie VS : un seul vainqueur -> tout le monde retourne au lobby.
+	if bool(_snap.get("vs_over", false)) and not _vs_handled:
+		_vs_handled = true
+		_return_to_lobby_after(8.0)
 	for ch in _army_root.get_children():
 		ch.free()
 	for a in _snap["armies"]:
@@ -826,6 +834,22 @@ func _show_toast(text: String) -> void:
 	_toast.text = text
 	_toast.visible = true
 	_toast_timer.start(2.4)
+
+
+func _on_vs_eliminated() -> void:
+	if _vs_returning:
+		return
+	_show_toast("💀 Vous êtes éliminé !")
+	_return_to_lobby_after(6.0)
+
+
+func _return_to_lobby_after(delay: float) -> void:
+	if _vs_returning:
+		return
+	_vs_returning = true
+	await get_tree().create_timer(delay).timeout
+	if is_inside_tree():
+		get_tree().change_scene_to_file("res://scenes/Lobby.tscn")
 
 
 func _recenter() -> void:

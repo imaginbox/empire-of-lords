@@ -72,8 +72,10 @@ func _process(delta: float) -> void:
 			_announce_season_winner(_last_rankings)
 		else:
 			_check_immediate_win()
-	for wid in _party_worlds:
-		_party_worlds[wid].game._process(delta)
+	for wid in _party_worlds.keys():
+		var w: Dictionary = _party_worlds[wid]
+		w.game._process(delta)
+		_vs_lifecycle(w, int(wid), delta)
 	_snap_timer += delta
 	if _snap_timer >= SNAPSHOT_INTERVAL:
 		_snap_timer = 0.0
@@ -269,6 +271,17 @@ func start_match_game(match_dict: Dictionary) -> void:
 	g.name = "GameState_P%d" % mid
 	add_child(g)
 	g.end_peace()
+	# Option "avec IA" : sans IA, pas de seigneurs ennemis (pur PvP).
+	if not bool(match_dict.get("with_ai", true)):
+		for c: CityNode in g.cities:
+			if c.owner == CityNode.OWNER_ENEMY:
+				c.owner = CityNode.OWNER_NEUTRAL
+				c.controller = 0
+				c.revealed = false
+	# Carte reduite : les joueurs et leurs villes sont proches du centre.
+	_shrink_vs_world(g)
+	# Pas de saisons en VS : une seule bataille jusqu'au vainqueur.
+	g.season_remaining = 1.0e9
 	var peers: Dictionary = {}
 	for p in players:
 		var pid: int = int(p)
@@ -276,9 +289,89 @@ func start_match_game(match_dict: Dictionary) -> void:
 			# VS : capitales regroupees pres du centre pour des batailles rapides.
 			_assign_city(g, pid, -1, true)
 			peers[pid] = true
-	_party_worlds[mid] = {"game": g, "peers": peers}
+	_party_worlds[mid] = {
+		"game": g, "peers": peers,
+		"eliminated": {}, "toast": "",
+		"over": false, "vs_winner": "", "over_timer": 0.0,
+	}
 	_broadcast_snapshots()
-	print("SERVER: partie \"%s\" demarree -- %d joueur(s), monde neuf." % [match_dict.get("name", "?"), players.size()])
+	print("SERVER: partie \"%s\" demarree -- %d joueur(s), monde reduit (%d villes)." % [match_dict.get("name", "?"), players.size(), g.cities.size()])
+
+
+## Rayon (px) du monde d'une partie VS : carte reduite, joueurs proches.
+const VS_RADIUS := 2000.0
+
+func _shrink_vs_world(g: GameState) -> void:
+	## Ne garde que les villes proches du centre => carte plus petite et
+	## concentration des affrontements entre joueurs.
+	var keep: Array = []
+	for c: CityNode in g.cities:
+		if c.map_pos.distance_to(Vector2.ZERO) <= VS_RADIUS:
+			keep.append(c)
+	if keep.size() < 8:
+		return   # trop peu de villes proches : on garde le monde entier
+	var keep_ids: Dictionary = {}
+	for c: CityNode in keep:
+		keep_ids[c.id] = true
+	g.cities = keep
+	for zi: int in g.zones.size():
+		g.zones[zi]["city_ids"] = []
+	for c: CityNode in g.cities:
+		var zi: int = int(g._city_zone.get(c.id, 0))
+		g.zones[zi]["city_ids"].append(c.id)
+	for cid: int in g._city_zone.keys():
+		if not keep_ids.has(cid):
+			g._city_zone.erase(cid)
+	print("SERVER: monde VS reduit a %d villes (rayon %.0f px)." % [g.cities.size(), VS_RADIUS])
+
+
+func _cities_of(g: GameState, pid: int) -> int:
+	var n := 0
+	for c: CityNode in g.cities:
+		if c.owner == CityNode.OWNER_PLAYER and c.controller == pid:
+			n += 1
+	return n
+
+
+func _broadcast_toast(w: Dictionary, msg: String) -> void:
+	w.toast = msg
+	print("SERVER: %s" % msg)
+
+
+func _vs_lifecycle(w: Dictionary, mid: int, delta: float) -> void:
+	## Declare le vainqueur unique quand un seul joueur a encore des villes,
+	## elimine ceux qui n'en ont plus, puis ferme la partie.
+	if w.over:
+		w.over_timer += delta
+		if w.over_timer >= 7.0:
+			_end_vs_match(w, mid)
+		return
+	var active: Array = []
+	for pid: int in w.peers.keys():
+		if _cities_of(w.game, pid) > 0:
+			active.append(pid)
+		elif not w.eliminated.has(pid):
+			w.eliminated[pid] = true
+			_net.call("rpc_vs_eliminated", pid)
+			var nm: String = _net.call("get_peer_name", pid)
+			print("SERVER: VS %s: %s elimine." % [mid, nm])
+			_broadcast_toast(w, "💀 %s est éliminé !" % nm)
+	if active.size() == 1:
+		var winner: int = int(active[0])
+		w.over = true
+		w.vs_winner = str(_net.call("get_peer_name", winner))
+		print("SERVER: VS %s: %s a gagne !" % [mid, w.vs_winner])
+		_broadcast_toast(w, "🏆 %s a gagné la partie !" % w.vs_winner)
+	elif active.is_empty() and not w.peers.is_empty():
+		w.over = true
+		w.over_timer = 7.0
+
+
+func _end_vs_match(w: Dictionary, mid: int) -> void:
+	_net.call("close_match", mid)
+	w.game.queue_free()
+	_party_worlds.erase(mid)
+	print("SERVER: VS %s terminee, monde ferme." % mid)
 
 
 # ------------------------------------------------------------- villes
@@ -332,7 +425,12 @@ func _assign_city(g: GameState, peer_id: int, zone_idx: int = -1, close_spawn: b
 		print("SERVER: aucune ville libre a attribuer au joueur %d." % peer_id)
 		return
 	best.owner = CityNode.OWNER_PLAYER
-	best.garrison = maxi(best.garrison, 300)
+	if close_spawn:
+		# Force egale au depart en VS : meme niveau, meme garnison pour tous.
+		best.level = 1
+		best.garrison = 300
+	else:
+		best.garrison = maxi(best.garrison, 300)
 	best.controller = peer_id
 	best.revealed = true
 	g.node_changed.emit(best.id)
@@ -383,6 +481,11 @@ func _broadcast_snapshots() -> void:
 		if w.peers.is_empty():
 			continue
 		var psnap: Dictionary = _build_snapshot(w.game)
+		# Snapshot specifique a la partie (toast + fin de partie VS).
+		psnap["toast"] = w.get("toast", "")
+		w.toast = ""
+		psnap["vs_over"] = bool(w.get("over", false))
+		psnap["vs_winner"] = str(w.get("vs_winner", ""))
 		for pid in w.peers:
 			if int(pid) > 1 and int(pid) in known and _ready_peers.has(pid):
 				_recv_snapshot.rpc_id(int(pid), psnap)
