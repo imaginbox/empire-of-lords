@@ -200,7 +200,11 @@ func _rpc_game_ready() -> void:
 func _leave_game() -> void:
 	if _net != null and _net.is_connected_to_room():
 		_rpc_game_left.rpc_id(1)
-	get_tree().change_scene_to_file("res://scenes/Lobby.tscn")
+	# Laisse les derniers RPC de jeu déjà en vol arriver tant que /root/Main
+	# existe encore, pour éviter "Node Main not found" au changement de scène.
+	await get_tree().create_timer(0.5).timeout
+	if is_inside_tree():
+		get_tree().change_scene_to_file("res://scenes/Lobby.tscn")
 
 
 ## Client-side stub (handled on the server).
@@ -881,7 +885,7 @@ func _return_to_lobby_after(delay: float) -> void:
 	_vs_returning = true
 	await get_tree().create_timer(delay).timeout
 	if is_inside_tree():
-		_leave_game()
+		await _leave_game()
 
 
 func _recenter() -> void:
@@ -993,5 +997,6 @@ func _toggle_help() -> void:
 func _on_quit() -> void:
 	if _net != null and _net.is_connected_to_room():
 		_rpc_game_left.rpc_id(1)
+		await get_tree().create_timer(0.5).timeout
 	_net.disconnect_from_room()
 	get_tree().change_scene_to_file("res://scenes/Lobby.tscn")
