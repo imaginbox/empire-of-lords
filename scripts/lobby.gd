@@ -1,19 +1,19 @@
 extends Control
-## Main menu / lobby.
-##   - Solo        : the single-player campaign.
-##   - Multijoueur : everything runs through the VPS WebSocket server.
-##                   Players CREATE a named match, it appears in "parties en
-##                   cours", others JOIN it, the host starts it. The VPS
-##                   decides how the match is played (Conquete = shared world).
+## Menu principal / Lobby.
+##
+##   - SOLO            : la campagne hors-ligne.
+##   - TOURNOI OFFICIEL: le monde Conquete PERSISTANT cree par le serveur VPS.
+##                       Toujours disponible. On le REJOINT directement.
+##   - PARTIES         : des parties creees par les JOUEURS (nommees, listees
+##                       dans "parties en cours"). On en cree une, d'autres la
+##                       rejoignent, l'hote la demarre.
 
 var _net: Node
 var _status: Label
 var _list_box: VBoxContainer
 var _name_edit: LineEdit
-var _mode_opt: OptionButton
 var _start_btn: Button
 var _quit_btn: Button
-var _create_btn: Button
 var _in_match_id := -1
 var _am_host := false
 
@@ -26,7 +26,7 @@ func _ready() -> void:
 		return
 	_net.match_list_changed.connect(_refresh_list)
 	_net.game_started.connect(_on_game_started)
-	_net.connected.connect(func(): _set_status("Connecté au serveur. Créez ou rejoignez une partie."))
+	_net.connected.connect(func(): _set_status("Connecté au serveur."))
 	_net.connection_failed.connect(func(): _set_status("Serveur injoignable — le mode Solo reste disponible."))
 	var err: Error = _net.connect_to_server()
 	if err != OK:
@@ -49,7 +49,7 @@ func _build() -> void:
 	title.add_theme_constant_override("outline_size", 6)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	title.position = Vector2(0, 20)
+	title.position = Vector2(0, 16)
 	title.size = Vector2(0, 46)
 	add_child(title)
 
@@ -58,25 +58,42 @@ func _build() -> void:
 	add_child(center)
 
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(560, 620)
+	scroll.custom_minimum_size = Vector2(600, 640)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	center.add_child(scroll)
 
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 10)
-	vb.custom_minimum_size = Vector2(520, 0)
+	vb.custom_minimum_size = Vector2(560, 0)
 	scroll.add_child(vb)
 
-	var b_solo := _make_button("Solo (campagne)", Color(0.2, 0.5, 0.25))
-	b_solo.custom_minimum_size = Vector2(0, 44)
+	var b_solo := _make_button("SOLO (campagne)", Color(0.2, 0.5, 0.25))
+	b_solo.custom_minimum_size = Vector2(0, 42)
 	b_solo.pressed.connect(_on_solo)
 	vb.add_child(b_solo)
 
 	var sep := HSeparator.new()
 	vb.add_child(sep)
 
-	vb.add_child(_section_label("MULTIJOUEUR EN LIGNE"))
+	# ---------- TOURNOI OFFICIEL ----------
+	vb.add_child(_section_label("TOURNOI OFFICIEL (Conquête)"))
+	var b_tournament := _make_button("⚔  Rejoindre le Tournoi — le monde officiel", Color(0.55, 0.32, 0.15))
+	b_tournament.custom_minimum_size = Vector2(0, 48)
+	b_tournament.pressed.connect(func(): _net.call("join_tournament"))
+	vb.add_child(b_tournament)
+	var note_t := Label.new()
+	note_t.text = "Le Tournoi est le monde persistant et partagé créé par le serveur officiel. "
+	note_t.text += "Il tourne en continu (saisons, zones, course au Top) : vous le rejoignez à tout moment."
+	note_t.add_theme_font_size_override("font_size", 12)
+	note_t.add_theme_color_override("font_color", Color(0.7, 0.78, 0.85))
+	note_t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(note_t)
 
+	var sep2 := HSeparator.new()
+	vb.add_child(sep2)
+
+	# ---------- PARTIES DES JOUEURS ----------
+	vb.add_child(_section_label("PARTIES DES JOUEURS"))
 	_status = Label.new()
 	_status.text = "Connexion au serveur…"
 	_status.add_theme_font_size_override("font_size", 13)
@@ -84,13 +101,11 @@ func _build() -> void:
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	vb.add_child(_status)
 
-	# ---- create a match ----
 	var create_panel := PanelContainer.new()
 	vb.add_child(create_panel)
 	var cb := VBoxContainer.new()
 	cb.add_theme_constant_override("separation", 6)
 	create_panel.add_child(cb)
-
 	cb.add_child(_section_label("CRÉER UNE PARTIE"))
 
 	var name_row := HBoxContainer.new()
@@ -98,31 +113,20 @@ func _build() -> void:
 	cb.add_child(name_row)
 	name_row.add_child(_field_label("Nom de la partie :"))
 	_name_edit = LineEdit.new()
-	_name_edit.placeholder_text = "ex. La conquête du midi"
-	_name_edit.custom_minimum_size = Vector2(230, 30)
+	_name_edit.placeholder_text = "ex. La revanche du vendredi"
+	_name_edit.custom_minimum_size = Vector2(240, 30)
 	name_row.add_child(_name_edit)
 
-	var mode_row := HBoxContainer.new()
-	mode_row.add_theme_constant_override("separation", 6)
-	cb.add_child(mode_row)
-	mode_row.add_child(_field_label("Mode :"))
-	_mode_opt = OptionButton.new()
-	_mode_opt.add_item("Multi Conquête (tournoi)")
-	_mode_opt.add_item("Multi VS (parties à la volée)")
-	_mode_opt.selected = 0
-	mode_row.add_child(_mode_opt)
+	var b_create := _make_button("Créer la partie", Color(0.45, 0.3, 0.55))
+	b_create.pressed.connect(_on_create)
+	cb.add_child(b_create)
 
-	_create_btn = _make_button("Créer la partie", Color(0.45, 0.3, 0.55))
-	_create_btn.pressed.connect(_on_create)
-	cb.add_child(_create_btn)
-
-	# ---- ongoing matches list ----
-	vb.add_child(_section_label("PARTIES EN COURS (en attente de joueurs)"))
+	vb.add_child(_section_label("PARTIES EN COURS"))
 	_list_box = VBoxContainer.new()
 	_list_box.add_theme_constant_override("separation", 6)
 	vb.add_child(_list_box)
 
-	_start_btn = _make_button("Démarrer la partie", Color(0.18, 0.5, 0.3))
+	_start_btn = _make_button("Démarrer ma partie", Color(0.18, 0.5, 0.3))
 	_start_btn.pressed.connect(func(): _net.call("start_match"))
 	_start_btn.visible = false
 	vb.add_child(_start_btn)
@@ -131,13 +135,6 @@ func _build() -> void:
 	_quit_btn.pressed.connect(func(): _net.call("leave_match"))
 	_quit_btn.visible = false
 	vb.add_child(_quit_btn)
-
-	var note := Label.new()
-	note.text = "Le serveur gère toutes les parties (Conquête : monde partagé permanent)."
-	note.add_theme_font_size_override("font_size", 12)
-	note.add_theme_color_override("font_color", Color(0.7, 0.75, 0.8))
-	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vb.add_child(note)
 
 
 func _section_label(text: String) -> Label:
@@ -182,8 +179,7 @@ func _on_create() -> void:
 	if name_text.is_empty():
 		_set_status("Donnez un nom à votre partie.")
 		return
-	var m: String = "conquest" if _mode_opt.selected == 0 else "vs"
-	_net.call("create_match", name_text, m)
+	_net.call("create_match", name_text, "vs")
 	_set_status("Partie « %s » créée — elle apparaît dans la liste." % name_text)
 	_name_edit.text = ""
 
@@ -210,12 +206,11 @@ func _refresh_list(list: Array) -> void:
 func _match_row(m: Dictionary, me: int) -> Control:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
-	var mode_txt: String = "Conquête" if m.get("mode") == "conquest" else "VS"
 	var p_count: int = (m.get("players") as Array).size()
 	var status_txt: String = " (en cours)" if m.get("status") == "running" else ""
 	var label := Label.new()
-	label.text = "%s [%s] — %d joueur(s)%s" % [m.get("name", "?"), mode_txt, p_count, status_txt]
-	label.custom_minimum_size = Vector2(300, 0)
+	label.text = "%s — %d joueur(s)%s" % [m.get("name", "?"), p_count, status_txt]
+	label.custom_minimum_size = Vector2(320, 0)
 	label.add_theme_font_size_override("font_size", 14)
 	row.add_child(label)
 
@@ -235,6 +230,6 @@ func _match_row(m: Dictionary, me: int) -> Control:
 	return row
 
 
-func _on_game_started(m: String) -> void:
-	print("LOBBY: game started (mode=%s) — launching." % m)
+func _on_game_started(_m: String) -> void:
+	print("LOBBY: partie démarrée — lancement du monde.")
 	get_tree().change_scene_to_file("res://scenes/Multiplayer.tscn")
