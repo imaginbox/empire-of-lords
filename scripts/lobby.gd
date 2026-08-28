@@ -71,6 +71,11 @@ func _build() -> void:
 	b_conq.pressed.connect(func(): _on_choose_mode("conquest"))
 	vb.add_child(b_conq)
 
+	var b_public := _make_button("Rejoindre la partie publique en ligne", Color(0.55, 0.3, 0.45))
+	b_public.custom_minimum_size = Vector2(0, 46)
+	b_public.pressed.connect(_on_quick_join)
+	vb.add_child(b_public)
+
 	# --- Multiplayer host/join panel (revealed after choosing a multi mode) ---
 	_mp_panel = PanelContainer.new()
 	_mp_panel.visible = false
@@ -108,10 +113,10 @@ func _build() -> void:
 	var ji_row := HBoxContainer.new()
 	ji_row.add_theme_constant_override("separation", 6)
 	mpb.add_child(ji_row)
-	ji_row.add_child(_field_label("IP du serveur :"))
+	ji_row.add_child(_field_label("Adresse du serveur :"))
 	_join_ip = LineEdit.new()
-	_join_ip.placeholder_text = "ex. 192.168.1.20"
-	_join_ip.custom_minimum_size = Vector2(180, 30)
+	_join_ip.text = "195-35-24-169.sslip.io"
+	_join_ip.custom_minimum_size = Vector2(220, 30)
 	ji_row.add_child(_join_ip)
 	var jp_row := HBoxContainer.new()
 	jp_row.add_theme_constant_override("separation", 6)
@@ -188,6 +193,21 @@ func _net() -> Node:
 
 func _on_solo() -> void:
 	get_tree().change_scene_to_file("res://scenes/Main.tscn")
+
+
+func _on_quick_join() -> void:
+	var net: Node = _net()
+	if net == null:
+		_status.text = "Réseau indisponible."
+		return
+	_mode = "conquest"
+	net.set("mode", "conquest")
+	var err: int = int(net.call("join_game", "195-35-24-169.sslip.io", 7777))
+	if err == 0:
+		_status.text = "Connexion au serveur public…"
+		get_tree().change_scene_to_file("res://scenes/Multiplayer.tscn")
+	else:
+		_status.text = "Erreur de connexion (%d)." % err
 
 
 func _on_choose_mode(m: String) -> void:
