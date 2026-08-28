@@ -126,8 +126,8 @@ func real_peers() -> Array:
 
 # ------------------------------------------------------------- matchmaking (client)
 
-func create_match(name: String, m: String) -> void:
-	_rpc_create_match.rpc_id(1, name, m)
+func create_match(match_name: String, m: String) -> void:
+	_rpc_create_match.rpc_id(1, match_name, m)
 
 
 func join_match(match_id: int) -> void:
@@ -168,19 +168,19 @@ func _rpc_game_start(m: String) -> void:
 
 ## Server receives a request to create a named match.
 @rpc("any_peer", "reliable")
-func _rpc_create_match(name: String, m: String) -> void:
+func _rpc_create_match(match_name: String, m: String) -> void:
 	if not multiplayer.is_server():
 		return
 	var pid := multiplayer.get_remote_sender_id()
 	var match_dict := {
-		"id": _next_match_id, "name": name, "mode": m,
+		"id": _next_match_id, "name": match_name, "mode": m,
 		"host": pid, "players": [pid], "status": "waiting",
 	}
 	_next_match_id += 1
 	matches.append(match_dict)
 	_peer_match[pid] = match_dict["id"]
 	_push_match_list()
-	print("SERVER: player %d created match \"%s\" (%s)." % [pid, name, m])
+	print("SERVER: player %d created match \"%s\" (%s)." % [pid, match_name, m])
 
 
 @rpc("any_peer", "reliable")

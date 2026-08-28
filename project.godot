@@ -18,7 +18,6 @@ config/icon="res://icon.svg"
 
 [autoload]
 
-ZivaNet="*res://scripts/ziva_net.gd"
 LanNet="*res://scripts/lan_net.gd"
 
 [display]
