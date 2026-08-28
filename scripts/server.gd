@@ -378,6 +378,7 @@ func _vs_lifecycle(w: Dictionary, mid: int, delta: float) -> void:
 		elif not w.eliminated.has(pid):
 			w.eliminated[pid] = true
 			_net.call("rpc_vs_eliminated", pid)
+			_ready_peers.erase(pid)   # plus de snapshots vers un joueur elimine
 			var nm: String = _net.call("get_peer_name", pid)
 			print("SERVER: VS %s: %s elimine." % [mid, nm])
 			_broadcast_toast(w, "💀 %s est éliminé !" % nm)
@@ -393,6 +394,10 @@ func _vs_lifecycle(w: Dictionary, mid: int, delta: float) -> void:
 
 
 func _end_vs_match(w: Dictionary, mid: int) -> void:
+	# Plus aucun snapshot de jeu ne doit partir vers ces joueurs : ils retournent
+	# au lobby. Evite les erreurs "Node Main not found" sur /root/Main.
+	for pid: int in w.peers.keys():
+		_ready_peers.erase(pid)
 	_net.call("close_match", mid)
 	w.game.queue_free()
 	_party_worlds.erase(mid)
