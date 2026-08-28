@@ -54,6 +54,13 @@ var _toast: Label
 var _toast_timer: Timer
 var _quit_btn: Button
 
+# Pause menu / recenter.
+var _pause_layer: CanvasLayer
+var _pause_visible := false
+var _recenter_btn: Button
+var _my_capital := Vector2.ZERO
+var _has_capital := false
+
 
 func _ready() -> void:
 	_net = get_node_or_null("/root/LanNet")
@@ -273,8 +280,23 @@ func _ensure_city_node(id: int, pos: Vector2, display_name: String) -> Node2D:
 
 		n.add_child(_label("0", Vector2(0, 20), Color.WHITE, 16, "Garrison"))
 		n.add_child(_label(display_name, Vector2(0, 36), Color(0.85, 0.95, 0.85), 13, "Name"))
+		var owner_lbl := _label("", Vector2(0, -18), Color.WHITE, 13, "Owner")
+		owner_lbl.visible = false
+		n.add_child(owner_lbl)
 		_city_nodes[id] = n
 	return n
+
+
+func _player_color(pid: int) -> Color:
+	var pal: Array = [
+		Color(0.35, 0.65, 1.0),
+		Color(1.0, 0.45, 0.35),
+		Color(0.45, 0.9, 0.45),
+		Color(1.0, 0.8, 0.3),
+		Color(0.85, 0.5, 1.0),
+		Color(0.4, 0.9, 0.9),
+	]
+	return pal[maxi(0, pid - 2) % pal.size()]
 
 
 func _label(text: String, offset: Vector2, color: Color, size: int, node_name: String) -> Label:
@@ -312,11 +334,27 @@ func _host_render_update() -> void:
 func _render_snap() -> void:
 	if not _has_snap:
 		return
+	var names: Dictionary = _snap.get("names", {})
+	_has_capital = false
 	for e in _snap["cities"]:
 		var id: int = e["id"]
 		var n: Node2D = _ensure_city_node(id, Vector2(e["x"], e["y"]), e["name"])
 		n.visible = e["revealed"]
-		(n.get_node("Sprite") as Sprite2D).texture = _texture_for(e["owner"])
+		var spr := n.get_node("Sprite") as Sprite2D
+		spr.texture = _texture_for(e["owner"])
+		spr.modulate = Color.WHITE
+		var owner_label := n.get_node("Owner") as Label
+		owner_label.visible = false
+		if e["owner"] == CityNode.OWNER_PLAYER and int(e["controller"]) > 1:
+			var ctrl := int(e["controller"])
+			var col := _player_color(ctrl)
+			spr.modulate = col.lerp(Color.WHITE, 0.45)
+			owner_label.text = str(names.get(ctrl, "Joueur %d" % ctrl))
+			owner_label.add_theme_color_override("font_color", col)
+			owner_label.visible = true
+			if ctrl == _net.my_id():
+				_my_capital = Vector2(e["x"], e["y"])
+				_has_capital = true
 		(n.get_node("Garrison") as Label).text = str(e["garrison"])
 	for ch in _army_root.get_children():
 		ch.free()
@@ -340,6 +378,11 @@ func _army_pos(a: Army) -> Vector2:
 # ------------------------------------------------------------- input
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _pause_visible:
+		if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+			_toggle_pause()
+			get_viewport().set_input_as_handled()
+		return
 	if event is InputEventMouseButton:
 		if event.pressed and event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			camera.zoom = (camera.zoom * 1.15).clamp(Vector2(MIN_ZOOM, MIN_ZOOM), Vector2(MAX_ZOOM, MAX_ZOOM))
@@ -363,6 +406,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		_clamp_camera()
 		get_viewport().set_input_as_handled()
 	elif event is InputEventKey and event.pressed:
+		if event.keycode == KEY_ESCAPE:
+			_toggle_pause()
+			get_viewport().set_input_as_handled()
+			return
+		if event.keycode == KEY_H:
+			_recenter()
+			get_viewport().set_input_as_handled()
+			return
 		var dir := Vector2.ZERO
 		if event.keycode == KEY_LEFT or event.keycode == KEY_A:
 			dir.x -= 1
@@ -559,6 +610,14 @@ func _build_hud() -> void:
 	_quit_btn.pressed.connect(_on_quit)
 	root.add_child(_quit_btn)
 
+	_recenter_btn = Button.new()
+	_recenter_btn.text = "⌂ Capitale"
+	_recenter_btn.position = Vector2(10, 70)
+	_recenter_btn.pressed.connect(_recenter)
+	root.add_child(_recenter_btn)
+
+	_build_pause_menu(root)
+
 	_toast = Label.new()
 	_toast.anchor_left = 0.5
 	_toast.anchor_right = 0.5
@@ -728,6 +787,61 @@ func _show_toast(text: String) -> void:
 	_toast.text = text
 	_toast.visible = true
 	_toast_timer.start(2.4)
+
+
+func _recenter() -> void:
+	if _has_capital:
+		camera.position = _my_capital
+		_clamp_camera()
+
+
+func _build_pause_menu(root: Control) -> void:
+	_pause_layer = CanvasLayer.new()
+	_pause_layer.name = "PauseLayer"
+	_pause_layer.layer = 30
+	_pause_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_pause_layer)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.6)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	_pause_layer.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_pause_layer.add_child(center)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 12)
+	vb.custom_minimum_size = Vector2(280, 0)
+	center.add_child(vb)
+	var lbl := Label.new()
+	lbl.text = "PAUSE"
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", 34)
+	vb.add_child(lbl)
+	var resume := Button.new()
+	resume.text = "Reprendre"
+	resume.custom_minimum_size = Vector2(0, 46)
+	resume.pressed.connect(_toggle_pause)
+	vb.add_child(resume)
+	var recenter := Button.new()
+	recenter.text = "Aller à ma capitale"
+	recenter.custom_minimum_size = Vector2(0, 46)
+	recenter.pressed.connect(func():
+		_recenter()
+		_toggle_pause())
+	vb.add_child(recenter)
+	var quit := Button.new()
+	quit.text = "Quitter au Lobby"
+	quit.custom_minimum_size = Vector2(0, 46)
+	quit.pressed.connect(_on_quit)
+	vb.add_child(quit)
+	_pause_layer.visible = false
+
+
+func _toggle_pause() -> void:
+	_pause_visible = not _pause_visible
+	if _pause_layer != null:
+		_pause_layer.visible = _pause_visible
 
 
 func _on_quit() -> void:

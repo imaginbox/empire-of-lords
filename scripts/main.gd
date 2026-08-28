@@ -25,12 +25,20 @@ const WORLD_LIMIT := 2700.0   # outer edge of the 4-zone evolving world
 var _dragging := false        # right/middle-mouse drag to pan the camera
 var _drag_last := Vector2.ZERO
 
+# Pause menu / speed / recenter.
+var _pause_layer: CanvasLayer
+var _pause_visible := false
+var _capital_pos := Vector2.ZERO
+var _has_capital := false
+
 
 func _ready() -> void:
 	hud.main_node = self
 	hud.attach(game)
 	_build_cities()
 	_build_army_layer()
+	_build_pause_menu()
+	_build_mini_hud()
 	game.army_launched.connect(_on_army_launched)
 	game.army_arrived.connect(_on_army_arrived)
 	game.node_changed.connect(_on_node_changed)
@@ -85,6 +93,9 @@ func _build_cities() -> void:
 
 		_city_nodes[c.id] = n
 		_update_city_visual(c)
+		if c.owner == CityNode.OWNER_PLAYER and c.controller == 0 and not _has_capital:
+			_capital_pos = c.map_pos
+			_has_capital = true
 
 
 func _make_label(text: String, offset: Vector2, color: Color, size: int = 14) -> Label:
@@ -210,17 +221,39 @@ func _on_zone_discovered(zone_index: int) -> void:
 		hud.on_zone_discovered(zone_index)
 
 
-func _on_army_arrived(_army: Army, _won: bool) -> void:
+func _on_army_arrived(army: Army, won: bool) -> void:
 	# Army node removed here; combat already resolved by GameState.
-	for army in _army_nodes.keys():
-		if not is_instance_valid(_army_nodes[army]):
-			_army_nodes.erase(army)
+	var dst: CityNode = game.get_city(army.to_id)
+	if dst != null:
+		var col := Color(0.4, 1.0, 0.4) if won else Color(1.0, 0.4, 0.4)
+		_spawn_floater(dst.map_pos, "Victoire !" if won else "Défaite !", col)
+	for a in _army_nodes.keys():
+		if not is_instance_valid(_army_nodes[a]):
+			_army_nodes.erase(a)
 	# cleanup stale army nodes
-	for army in _army_nodes.keys():
-		if army not in game.armies:
-			if is_instance_valid(_army_nodes[army]):
-				_army_nodes[army].queue_free()
-			_army_nodes.erase(army)
+	for a in _army_nodes.keys():
+		if a not in game.armies:
+			if is_instance_valid(_army_nodes[a]):
+				_army_nodes[a].queue_free()
+			_army_nodes.erase(a)
+
+
+func _spawn_floater(world_pos: Vector2, text: String, color: Color) -> void:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", 20)
+	l.add_theme_color_override("font_color", color)
+	l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.9))
+	l.add_theme_constant_override("outline_size", 5)
+	l.position = world_pos - Vector2(60, 0)
+	l.size = Vector2(120, 24)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	add_child(l)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(l, "position:y", l.position.y - 42.0, 1.2)
+	tw.tween_property(l, "modulate:a", 0.0, 1.2)
+	tw.chain().tween_callback(l.queue_free)
 
 
 # ---------------------------------------------------------------- selection
@@ -311,6 +344,11 @@ func _clamp_camera() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _pause_visible:
+		if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+			_toggle_pause()
+			get_viewport().set_input_as_handled()
+		return
 	if event is InputEventMouseButton:
 		if event.pressed and event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			camera.zoom = (camera.zoom * 1.15).clamp(Vector2(MIN_ZOOM, MIN_ZOOM), Vector2(MAX_ZOOM, MAX_ZOOM))
@@ -336,6 +374,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventKey and event.pressed and event.keycode == KEY_N:
 		# dev shortcut: end the current season immediately
 		game._end_season()
+	elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		_toggle_pause()
+		get_viewport().set_input_as_handled()
+	elif event is InputEventKey and event.pressed and event.keycode == KEY_H:
+		_recenter()
+		get_viewport().set_input_as_handled()
 
 
 func _on_map_click(screen_pos: Vector2) -> void:
@@ -365,3 +409,113 @@ func _on_map_click(screen_pos: Vector2) -> void:
 			clear_selection()
 		else:
 			set_target(clicked)
+
+
+# ---------------------------------------------------------------- pause / speed / recenter
+
+func _build_mini_hud() -> void:
+	var layer := CanvasLayer.new()
+	layer.name = "MiniHUD"
+	add_child(layer)
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(root)
+	var vb := VBoxContainer.new()
+	vb.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	vb.offset_left = -70.0
+	vb.offset_top = 10.0
+	vb.offset_right = -10.0
+	vb.offset_bottom = 96.0
+	vb.add_theme_constant_override("separation", 6)
+	root.add_child(vb)
+	var pause := Button.new()
+	pause.text = "⏸ Pause"
+	pause.tooltip_text = "Menu Pause (Échap)"
+	pause.pressed.connect(_toggle_pause)
+	vb.add_child(pause)
+	var rec := Button.new()
+	rec.text = "⌂ Capitale"
+	rec.tooltip_text = "Centrer sur votre capitale (H)"
+	rec.pressed.connect(_recenter)
+	vb.add_child(rec)
+
+
+func _build_pause_menu() -> void:
+	_pause_layer = CanvasLayer.new()
+	_pause_layer.name = "PauseLayer"
+	_pause_layer.layer = 40
+	_pause_layer.process_mode = Node.PROCESS_MODE_ALWAYS
+	add_child(_pause_layer)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.62)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	_pause_layer.add_child(dim)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_pause_layer.add_child(center)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 12)
+	vb.custom_minimum_size = Vector2(300, 0)
+	center.add_child(vb)
+	var lbl := Label.new()
+	lbl.text = "PAUSE"
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.add_theme_font_size_override("font_size", 34)
+	vb.add_child(lbl)
+	var resume := Button.new()
+	resume.text = "Reprendre"
+	resume.custom_minimum_size = Vector2(0, 46)
+	resume.pressed.connect(_toggle_pause)
+	vb.add_child(resume)
+	var speed_row := HBoxContainer.new()
+	speed_row.add_theme_constant_override("separation", 8)
+	speed_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	vb.add_child(speed_row)
+	var sp_lbl := Label.new()
+	sp_lbl.text = "Vitesse :"
+	vb.add_child(sp_lbl)
+	for i in [1, 2, 3]:
+		var b := Button.new()
+		b.text = "x%d" % i
+		b.custom_minimum_size = Vector2(70, 42)
+		var v: int = i
+		b.pressed.connect(func(): _set_speed(v))
+		speed_row.add_child(b)
+	var recenter := Button.new()
+	recenter.text = "Aller à ma capitale"
+	recenter.custom_minimum_size = Vector2(0, 46)
+	recenter.pressed.connect(func():
+		_recenter()
+		_toggle_pause())
+	vb.add_child(recenter)
+	var quit := Button.new()
+	quit.text = "Retour au menu"
+	quit.custom_minimum_size = Vector2(0, 46)
+	quit.pressed.connect(_on_quit_to_lobby)
+	vb.add_child(quit)
+	_pause_layer.visible = false
+
+
+func _toggle_pause() -> void:
+	_pause_visible = not _pause_visible
+	get_tree().paused = _pause_visible
+	if _pause_layer != null:
+		_pause_layer.visible = _pause_visible
+
+
+func _set_speed(speed: int) -> void:
+	Engine.time_scale = float(speed)
+
+
+func _recenter() -> void:
+	if _has_capital:
+		camera.position = _capital_pos
+		_clamp_camera()
+
+
+func _on_quit_to_lobby() -> void:
+	get_tree().paused = false
+	Engine.time_scale = 1.0
+	get_tree().change_scene_to_file("res://scenes/Lobby.tscn")

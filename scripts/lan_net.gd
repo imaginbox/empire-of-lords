@@ -26,12 +26,15 @@ const WS_PORT := 9080
 var mode: String = "conquest"   # "vs" | "conquest"
 var _hosting: bool = false
 var _connected: bool = false
+var player_name: String = ""    # pseudo du joueur local, envoye au serveur
 
 # --- server-side matchmaking state (only meaningful on the VPS) ---
 var matches: Array = []         # [{id,name,mode,host,players,status}]
 var _next_match_id := 1
 # peer_id -> match_id they are currently in
 var _peer_match: Dictionary = {}
+# peer_id -> pseudo du joueur (cote serveur)
+var _peer_names: Dictionary = {}
 
 
 func _ready() -> void:
@@ -107,6 +110,19 @@ func my_id() -> int:
 	return multiplayer.get_unique_id()
 
 
+## Set the local player's pseudo (sent to the server on matchmaking actions).
+func set_player_name(n: String) -> void:
+	player_name = n.strip_edges()
+
+
+## Server-side helper: readable name for a peer (default "Joueur N").
+func get_peer_name(pid: int) -> String:
+	var n: Variant = _peer_names.get(pid, "")
+	if n != null and str(n) != "":
+		return str(n)
+	return "Joueur %d" % pid
+
+
 ## The VPS (peer 1) is always the authority/server.
 func is_host() -> bool:
 	return multiplayer.is_server()
@@ -130,15 +146,15 @@ func real_peers() -> Array:
 ## action (no match to create): the VPS assigns you a capital and starts the
 ## persistent world.
 func join_tournament() -> void:
-	_rpc_join_tournament.rpc_id(1)
+	_rpc_join_tournament.rpc_id(1, player_name)
 
 
 func create_match(match_name: String, m: String) -> void:
-	_rpc_create_match.rpc_id(1, match_name, m)
+	_rpc_create_match.rpc_id(1, match_name, m, player_name)
 
 
 func join_match(match_id: int) -> void:
-	_rpc_join_match.rpc_id(1, match_id)
+	_rpc_join_match.rpc_id(1, match_id, player_name)
 
 
 func leave_match() -> void:
@@ -180,10 +196,12 @@ func _rpc_game_start(m: String) -> void:
 
 ## Server receives a request to join the official persistent Tournament.
 @rpc("any_peer", "reliable")
-func _rpc_join_tournament() -> void:
+func _rpc_join_tournament(pname: String) -> void:
 	if not multiplayer.is_server():
 		return
 	var pid := multiplayer.get_remote_sender_id()
+	if pname != "":
+		_peer_names[pid] = pname
 	_remove_from_match(pid)   # leave any player-created party first
 	var main: Node = get_node_or_null("/root/Main")
 	if main != null and main.has_method("on_join_tournament"):
@@ -191,26 +209,31 @@ func _rpc_join_tournament() -> void:
 
 ## Server receives a request to create a named match.
 @rpc("any_peer", "reliable")
-func _rpc_create_match(match_name: String, m: String) -> void:
+func _rpc_create_match(match_name: String, m: String, creator_name: String) -> void:
 	if not multiplayer.is_server():
 		return
 	var pid := multiplayer.get_remote_sender_id()
+	if creator_name != "":
+		_peer_names[pid] = creator_name
 	var match_dict := {
 		"id": _next_match_id, "name": match_name, "mode": m,
 		"host": pid, "players": [pid], "status": "waiting",
+		"host_name": get_peer_name(pid),
 	}
 	_next_match_id += 1
 	matches.append(match_dict)
 	_peer_match[pid] = match_dict["id"]
 	_push_match_list()
-	print("SERVER: player %d created match \"%s\" (%s)." % [pid, match_name, m])
+	print("SERVER: player %d (%s) created match \"%s\" (%s)." % [pid, get_peer_name(pid), match_name, m])
 
 
 @rpc("any_peer", "reliable")
-func _rpc_join_match(match_id: int) -> void:
+func _rpc_join_match(match_id: int, pname: String) -> void:
 	if not multiplayer.is_server():
 		return
 	var pid := multiplayer.get_remote_sender_id()
+	if pname != "":
+		_peer_names[pid] = pname
 	for match_dict in matches:
 		if match_dict["id"] == match_id and match_dict["status"] == "waiting":
 			if pid not in match_dict["players"]:
@@ -296,4 +319,5 @@ func _on_peer_disconnected(id: int) -> void:
 	if id > 1:
 		peer_left.emit(id)
 		if multiplayer.is_server():
+			_peer_names.erase(id)
 			_remove_from_match(id)

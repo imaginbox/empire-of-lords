@@ -219,12 +219,17 @@ func _build_snapshot(g: GameState) -> Dictionary:
 	var zname := ""
 	if g.zones.size() > 0 and g._zone_front < g.zones.size():
 		zname = str(g.zones[g._zone_front]["name"])
+	var names := {}
+	for c: CityNode in g.cities:
+		if c.controller > 1 and not names.has(c.controller):
+			names[c.controller] = _net.call("get_peer_name", c.controller)
 	return {
 		"cities": city_arr, "armies": army_arr,
 		"front": g._zone_front, "zone_total": g.zones.size(),
 		"season": g.season_number, "season_left": g.season_remaining,
 		"gold": g.player.gold, "level": g.player.level,
 		"dominance": g.dominance_score(), "zname": zname,
+		"names": names,
 	}
 
 
