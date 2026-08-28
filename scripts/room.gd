@@ -134,10 +134,10 @@ func _build() -> void:
 	vb.add_child(b_quit)
 
 
-func _mk_label(text: String, size: int) -> Label:
+func _mk_label(text: String, font_size: int) -> Label:
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_size_override("font_size", size)
+	l.add_theme_font_size_override("font_size", font_size)
 	return l
 
 
@@ -258,7 +258,7 @@ func _chat_relay(who: String, text: String) -> void:
 func _add_chat_line(who: String, text: String) -> void:
 	_chat_box.append_text("[b]%s[/b] : %s\n" % [who, text])
 	if _chat_box.get_line_count() > CHAT_MAX:
-		_chat_box.text = _chat_box.text.substr(_chat_box.text.length() / 2)
+		_chat_box.text = _chat_box.text.substr(int(_chat_box.text.length() / 2.0))
 
 
 func _add_system_line(text: String) -> void:
