@@ -364,6 +364,9 @@ func _render_snap() -> void:
 		_centered_once = true
 		camera.position = _my_capital
 		_clamp_camera()
+	var toast_str: String = str(_snap.get("toast", ""))
+	if toast_str != "":
+		_show_toast(toast_str)
 	for ch in _army_root.get_children():
 		ch.free()
 	for a in _snap["armies"]:

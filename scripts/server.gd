@@ -24,6 +24,9 @@ var _ready_peers: Dictionary = {}          # pid -> true (a charge la scene de j
 var _net: Node = null
 var _snap_timer := 0.0
 var _save_timer := 0.0
+var _last_rankings: Array = []
+var _winner_announced := false
+var _toast := ""
 
 
 func _ready() -> void:
@@ -59,7 +62,14 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	if game != null:
+		_last_rankings = _territory_rankings(game)
+		var prev_sn: int = game.season_number
 		game._process(delta)   # le Tournoi simule en permanence
+		if game.season_number != prev_sn:
+			_winner_announced = false
+			_announce_season_winner(_last_rankings)
+		else:
+			_check_immediate_win()
 	for wid in _party_worlds:
 		_party_worlds[wid].game._process(delta)
 	_snap_timer += delta
@@ -145,6 +155,47 @@ func _on_season_ended(_rank: int, _gems: int, _realm: int, _res: String) -> void
 	for p in _tournament_peers:
 		if int(p) > 1:
 			_assign_city(game, int(p))
+	_save_state()
+
+
+## Classement des joueurs par nombre de villes controlees (descendant).
+func _territory_rankings(g: GameState) -> Array:
+	var counts: Dictionary = {}
+	for c: CityNode in g.cities:
+		if c.owner == CityNode.OWNER_PLAYER and c.controller > 1:
+			counts[c.controller] = int(counts.get(c.controller, 0)) + 1
+	var out: Array = []
+	for pid in counts:
+		out.append({"controller": int(pid),
+			"name": str(_net.call("get_peer_name", int(pid))),
+			"cities": int(counts[pid])})
+	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a["cities"]) > int(b["cities"]))
+	return out
+
+
+## Victoire immédiate : un joueur contrôle 100% du monde.
+func _check_immediate_win() -> void:
+	if _winner_announced or _last_rankings.is_empty():
+		return
+	var total: int = game.cities.size()
+	if total <= 0:
+		return
+	if int(_last_rankings[0]["cities"]) >= total:
+		_winner_announced = true
+		_announce_season_winner(_last_rankings)
+		game._end_season()
+
+
+## Annonce le vainqueur de la saison (le plus de territoire) a tous.
+func _announce_season_winner(rankings: Array) -> void:
+	if rankings.is_empty():
+		return
+	var top: Dictionary = rankings[0]
+	var msg: String = "🏆 %s remporte la saison %d avec %d ville(s) !" % [
+		top["name"], game.season_number, int(top["cities"])]
+	print("SERVER: %s" % msg)
+	_toast = msg
 	_save_state()
 
 
@@ -243,7 +294,7 @@ func _build_snapshot(g: GameState) -> Dictionary:
 		"season": g.season_number, "season_left": g.season_remaining,
 		"gold": g.player.gold, "level": g.player.level,
 		"dominance": g.dominance_score(), "zname": zname,
-		"names": names,
+		"names": names, "toast": _toast,
 	}
 
 
@@ -254,6 +305,7 @@ func _broadcast_snapshots() -> void:
 		for pid in _tournament_peers:
 			if int(pid) > 1 and int(pid) in known and _ready_peers.has(pid):
 				_recv_snapshot.rpc_id(int(pid), tsnap)
+		_toast = ""   # toast consomme apres une diffusion
 	for wid in _party_worlds:
 		var w: Dictionary = _party_worlds[wid]
 		if w.peers.is_empty():
