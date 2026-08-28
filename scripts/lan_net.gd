@@ -18,7 +18,6 @@ signal match_list_changed(list: Array)   # emitted on the CLIENT with new list
 signal game_started(mode: String)        # emitted on the CLIENT: load the game scene
 signal chat_message(sender_name: String, text: String)   # emitted on the CLIENT
 signal zone_choice_offered(zones: Array) # emitted on the CLIENT: pick a starting zone
-signal zone_choice_done                  # emitted on the CLIENT once the server accepted the pick
 
 ## Public VPS address (TLS terminated by nginx/caddy -> internal ws port).
 const SERVER_URL := "wss://195-35-24-169.sslip.io"
