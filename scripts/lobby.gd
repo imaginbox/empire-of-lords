@@ -338,8 +338,9 @@ func _on_create() -> void:
 		_set_status("Donnez un nom à votre partie.")
 		return
 	_net.call("create_match", name_text, "vs", _with_ai_btn.button_pressed)
-	_set_status("Partie VS « %s » créée — elle apparaît dans la liste." % name_text)
+	_set_status("Partie VS « %s » créée — ouverture de la salle d'attente…" % name_text)
 	_name_edit.text = ""
+	get_tree().change_scene_to_file("res://scenes/Room.tscn")
 
 
 func _on_ready_toggle() -> void:
@@ -430,7 +431,9 @@ func _match_row(m: Dictionary, me: int) -> Control:
 	elif m.get("status") == "waiting" and me > 0 and int(m.get("id")) != _in_match_id:
 		var join := _make_button("Rejoindre", Color(0.18, 0.42, 0.55))
 		var m_id: int = int(m.get("id"))
-		join.pressed.connect(func(): _net.call("join_match", m_id))
+		join.pressed.connect(func():
+			_net.call("join_match", m_id)
+			get_tree().change_scene_to_file("res://scenes/Room.tscn"))
 		row.add_child(join)
 	return row
 
