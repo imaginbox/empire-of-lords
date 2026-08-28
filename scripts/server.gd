@@ -18,6 +18,7 @@ var game: GameState = null
 var _net: Node = null
 var _snap_timer := 0.0
 var _save_timer := 0.0
+var _game_peers: Dictionary = {}   # peers that loaded the game scene -> true
 
 
 func _ready() -> void:
@@ -26,14 +27,14 @@ func _ready() -> void:
 		print("SERVER: LanNet autoload missing — aborting.")
 		get_tree().quit(1)
 		return
-	var port := _arg_int("--port", 7777)
-	var err := int(_net.call("host_game", port))
+	var port := _arg_int("--port", 9080)
+	var err := int(_net.call("host_server", port))
 	if err != 0:
 		print("SERVER: cannot host on port %d (err=%d)." % [port, err])
 		get_tree().quit(1)
 		return
 	_net.set("mode", "conquest")
-	print("SERVER: hosting Conquest on port %d" % port)
+	print("SERVER: hosting WebSocket server on port %d" % port)
 
 	game = GameState.new()
 	game.name = "GameState"
@@ -47,7 +48,6 @@ func _ready() -> void:
 
 	set_multiplayer_authority(1)
 	game.season_ended.connect(_on_season_ended)
-	_net.peer_joined.connect(_on_peer_joined)
 	print("SERVER: ready. Waiting for players…")
 
 
@@ -94,16 +94,31 @@ func _arg_int(flag: String, default_val: int) -> int:
 # ------------------------------------------------------------- players
 
 func _on_peer_joined(peer_id: int) -> void:
-	if peer_id <= 1:
-		return
-	print("SERVER: player %d joined." % peer_id)
-	_assign_city(peer_id)
-	_broadcast_snapshot()
+	# A peer connected to the lobby. They only get a capital once their
+	# match starts (start_match_game).
+	if peer_id > 1:
+		print("SERVER: player %d connected (lobby)." % peer_id)
 
 
 func _on_peer_left(peer_id: int) -> void:
 	if peer_id > 1:
-		print("SERVER: player %d left." % peer_id)
+		_game_peers.erase(peer_id)
+		print("SERVER: player %d disconnected." % peer_id)
+
+
+## Called by LanNet when a match starts. The VPS decides how the match is
+## played: every match enters the persistent shared Conquest world and each
+## player of the match receives their own capital city.
+func start_match_game(match_dict: Dictionary) -> void:
+	if game == null:
+		return
+	var players: Array = match_dict.get("players", [])
+	for p in players:
+		var pid: int = int(p)
+		if pid > 1:
+			_assign_city(pid)
+	_broadcast_snapshot()
+	print("SERVER: match \"%s\" (%s) is running — %d player(s) in the world." % [match_dict.get("name", "?"), match_dict.get("mode", "?"), players.size()])
 
 
 func _assign_city(peer_id: int) -> void:
@@ -172,7 +187,22 @@ func _build_snapshot() -> Dictionary:
 
 
 func _broadcast_snapshot() -> void:
-	_recv_snapshot.rpc(_build_snapshot())
+	if _game_peers.is_empty():
+		return
+	var snap: Dictionary = _build_snapshot()
+	for pid in _game_peers:
+		if int(pid) > 1:
+			_recv_snapshot.rpc_id(int(pid), snap)
+
+
+## A client signals it has loaded the game scene (/root/Main) and can now
+## receive snapshots. Until then we don't send it anything (avoids RPC noise
+## while it is still in the Lobby).
+@rpc("any_peer", "reliable")
+func _rpc_game_ready() -> void:
+	if not multiplayer.is_server():
+		return
+	_game_peers[multiplayer.get_remote_sender_id()] = true
 
 
 ## Stub: the server only SENDS snapshots. This exists so the .rpc() callable

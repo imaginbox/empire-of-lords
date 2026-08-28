@@ -1,23 +1,39 @@
 extends Control
-## Main menu / lobby. Choose between three game modes:
+## Main menu / lobby.
 ##   - Solo        : the single-player campaign.
-##   - Multi VS    : quick matches, pick-up style (short season).
-##   - Multi Conquête : the tournament/league conquest concept.
-## For a multiplayer mode you host or join a server, then enter the waiting
-## room (Room.tscn) where players gather, chat and a countdown starts the game.
+##   - Multijoueur : everything runs through the VPS WebSocket server.
+##                   Players CREATE a named match, it appears in "parties en
+##                   cours", others JOIN it, the host starts it. The VPS
+##                   decides how the match is played (Conquete = shared world).
 
-var _mode := ""                # "", "vs", "conquest"
+var _net: Node
 var _status: Label
-var _host_port: LineEdit
-var _join_ip: LineEdit
-var _join_port: LineEdit
-var _mp_panel: PanelContainer
-var _mp_header: Label
+var _list_box: VBoxContainer
+var _name_edit: LineEdit
+var _mode_opt: OptionButton
+var _start_btn: Button
+var _quit_btn: Button
+var _create_btn: Button
+var _in_match_id := -1
+var _am_host := false
 
 
 func _ready() -> void:
+	_net = get_node_or_null("/root/LanNet")
 	_build()
+	if _net == null:
+		_set_status("Réseau indisponible.")
+		return
+	_net.match_list_changed.connect(_refresh_list)
+	_net.game_started.connect(_on_game_started)
+	_net.connected.connect(func(): _set_status("Connecté au serveur. Créez ou rejoignez une partie."))
+	_net.connection_failed.connect(func(): _set_status("Serveur injoignable — le mode Solo reste disponible."))
+	var err: Error = _net.connect_to_server()
+	if err != OK:
+		_set_status("Connexion impossible (err %d)." % err)
 
+
+# ------------------------------------------------------------- UI
 
 func _build() -> void:
 	var bg := ColorRect.new()
@@ -27,138 +43,107 @@ func _build() -> void:
 
 	var title := Label.new()
 	title.text = "Empire of Lords"
-	title.add_theme_font_size_override("font_size", 44)
+	title.add_theme_font_size_override("font_size", 40)
 	title.add_theme_color_override("font_color", Color(1, 0.88, 0.55))
 	title.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
 	title.add_theme_constant_override("outline_size", 6)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	title.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
-	title.position = Vector2(0, 30)
-	title.size = Vector2(0, 50)
+	title.position = Vector2(0, 20)
+	title.size = Vector2(0, 46)
 	add_child(title)
 
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(center)
 
-	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(460, 0)
-	center.add_child(panel)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(560, 620)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	center.add_child(scroll)
+
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 12)
-	panel.add_child(vb)
+	vb.add_theme_constant_override("separation", 10)
+	vb.custom_minimum_size = Vector2(520, 0)
+	scroll.add_child(vb)
 
-	var mode_label := Label.new()
-	mode_label.text = "Choisissez votre mode de jeu"
-	mode_label.add_theme_font_size_override("font_size", 20)
-	mode_label.add_theme_color_override("font_color", Color(1, 0.95, 0.85))
-	mode_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(mode_label)
-
-	var b_solo := _make_button("Solo", Color(0.2, 0.5, 0.25))
-	b_solo.custom_minimum_size = Vector2(0, 46)
+	var b_solo := _make_button("Solo (campagne)", Color(0.2, 0.5, 0.25))
+	b_solo.custom_minimum_size = Vector2(0, 44)
 	b_solo.pressed.connect(_on_solo)
 	vb.add_child(b_solo)
 
-	if OS.has_feature("web"):
-		# Version navigateur : ENet n'existe pas sur le Web (pas de sockets UDP),
-		# donc on n'affiche que le mode Solo.
-		var note := Label.new()
-		note.text = "Version navigateur — mode Solo uniquement.\nLe multijoueur est disponible dans la version de bureau (Windows)."
-		note.add_theme_font_size_override("font_size", 13)
-		note.add_theme_color_override("font_color", Color(0.9, 0.85, 0.7))
-		note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		vb.add_child(note)
-		_status = Label.new()
-		_status.text = ""
-		_status.add_theme_font_size_override("font_size", 13)
-		_status.add_theme_color_override("font_color", Color(1, 0.7, 0.5))
-		vb.add_child(_status)
-		return
+	var sep := HSeparator.new()
+	vb.add_child(sep)
 
-	var b_vs := _make_button("Multi VS  (parties à la volée)", Color(0.18, 0.42, 0.55))
-	b_vs.custom_minimum_size = Vector2(0, 46)
-	b_vs.pressed.connect(func(): _on_choose_mode("vs"))
-	vb.add_child(b_vs)
-
-	var b_conq := _make_button("Multi Conquête  (tournoi)", Color(0.45, 0.3, 0.55))
-	b_conq.custom_minimum_size = Vector2(0, 46)
-	b_conq.pressed.connect(func(): _on_choose_mode("conquest"))
-	vb.add_child(b_conq)
-
-	var b_public := _make_button("Rejoindre la partie publique en ligne", Color(0.55, 0.3, 0.45))
-	b_public.custom_minimum_size = Vector2(0, 46)
-	b_public.pressed.connect(_on_quick_join)
-	vb.add_child(b_public)
-
-	# --- Multiplayer host/join panel (revealed after choosing a multi mode) ---
-	_mp_panel = PanelContainer.new()
-	_mp_panel.visible = false
-	vb.add_child(_mp_panel)
-	var mpb := VBoxContainer.new()
-	mpb.add_theme_constant_override("separation", 8)
-	_mp_panel.add_child(mpb)
-
-	_mp_header = Label.new()
-	_mp_header.text = ""
-	_mp_header.add_theme_font_size_override("font_size", 16)
-	_mp_header.add_theme_color_override("font_color", Color(0.9, 0.95, 1))
-	_mp_header.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	mpb.add_child(_mp_header)
-
-	mpb.add_child(_section_label("HÉBERGER (vous créez le serveur)"))
-	var ip_row := HBoxContainer.new()
-	ip_row.add_theme_constant_override("separation", 6)
-	mpb.add_child(ip_row)
-	ip_row.add_child(_field_label("Votre IP LAN :"))
-	ip_row.add_child(_value_label(_local_ip()))
-	var hp_row := HBoxContainer.new()
-	hp_row.add_theme_constant_override("separation", 6)
-	mpb.add_child(hp_row)
-	hp_row.add_child(_field_label("Port :"))
-	_host_port = LineEdit.new()
-	_host_port.text = "7777"
-	_host_port.custom_minimum_size = Vector2(90, 30)
-	hp_row.add_child(_host_port)
-	var b_host := _make_button("Héberger et ouvrir la salle d'attente", Color(0.18, 0.4, 0.5))
-	b_host.pressed.connect(_on_host)
-	mpb.add_child(b_host)
-
-	mpb.add_child(_section_label("REJOINDRE UN SERVEUR EXISTANT"))
-	var ji_row := HBoxContainer.new()
-	ji_row.add_theme_constant_override("separation", 6)
-	mpb.add_child(ji_row)
-	ji_row.add_child(_field_label("Adresse du serveur :"))
-	_join_ip = LineEdit.new()
-	_join_ip.text = "195-35-24-169.sslip.io"
-	_join_ip.custom_minimum_size = Vector2(220, 30)
-	ji_row.add_child(_join_ip)
-	var jp_row := HBoxContainer.new()
-	jp_row.add_theme_constant_override("separation", 6)
-	mpb.add_child(jp_row)
-	jp_row.add_child(_field_label("Port :"))
-	_join_port = LineEdit.new()
-	_join_port.text = "7777"
-	_join_port.custom_minimum_size = Vector2(80, 30)
-	jp_row.add_child(_join_port)
-	var b_join := _make_button("Rejoindre et entrer dans la salle", Color(0.2, 0.35, 0.55))
-	b_join.pressed.connect(_on_join)
-	mpb.add_child(b_join)
+	vb.add_child(_section_label("MULTIJOUEUR EN LIGNE"))
 
 	_status = Label.new()
-	_status.text = ""
+	_status.text = "Connexion au serveur…"
 	_status.add_theme_font_size_override("font_size", 13)
-	_status.add_theme_color_override("font_color", Color(1, 0.7, 0.5))
+	_status.add_theme_color_override("font_color", Color(1, 0.75, 0.5))
 	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	mpb.add_child(_status)
+	vb.add_child(_status)
+
+	# ---- create a match ----
+	var create_panel := PanelContainer.new()
+	vb.add_child(create_panel)
+	var cb := VBoxContainer.new()
+	cb.add_theme_constant_override("separation", 6)
+	create_panel.add_child(cb)
+
+	cb.add_child(_section_label("CRÉER UNE PARTIE"))
+
+	var name_row := HBoxContainer.new()
+	name_row.add_theme_constant_override("separation", 6)
+	cb.add_child(name_row)
+	name_row.add_child(_field_label("Nom de la partie :"))
+	_name_edit = LineEdit.new()
+	_name_edit.placeholder_text = "ex. La conquête du midi"
+	_name_edit.custom_minimum_size = Vector2(230, 30)
+	name_row.add_child(_name_edit)
+
+	var mode_row := HBoxContainer.new()
+	mode_row.add_theme_constant_override("separation", 6)
+	cb.add_child(mode_row)
+	mode_row.add_child(_field_label("Mode :"))
+	_mode_opt = OptionButton.new()
+	_mode_opt.add_item("Multi Conquête (tournoi)")
+	_mode_opt.add_item("Multi VS (parties à la volée)")
+	_mode_opt.selected = 0
+	mode_row.add_child(_mode_opt)
+
+	_create_btn = _make_button("Créer la partie", Color(0.45, 0.3, 0.55))
+	_create_btn.pressed.connect(_on_create)
+	cb.add_child(_create_btn)
+
+	# ---- ongoing matches list ----
+	vb.add_child(_section_label("PARTIES EN COURS (en attente de joueurs)"))
+	_list_box = VBoxContainer.new()
+	_list_box.add_theme_constant_override("separation", 6)
+	vb.add_child(_list_box)
+
+	_start_btn = _make_button("Démarrer la partie", Color(0.18, 0.5, 0.3))
+	_start_btn.pressed.connect(func(): _net.call("start_match"))
+	_start_btn.visible = false
+	vb.add_child(_start_btn)
+
+	_quit_btn = _make_button("Quitter ma partie", Color(0.5, 0.25, 0.25))
+	_quit_btn.pressed.connect(func(): _net.call("leave_match"))
+	_quit_btn.visible = false
+	vb.add_child(_quit_btn)
+
+	var note := Label.new()
+	note.text = "Le serveur gère toutes les parties (Conquête : monde partagé permanent)."
+	note.add_theme_font_size_override("font_size", 12)
+	note.add_theme_color_override("font_color", Color(0.7, 0.75, 0.8))
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(note)
 
 
 func _section_label(text: String) -> Label:
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_size_override("font_size", 15)
+	l.add_theme_font_size_override("font_size", 14)
 	l.add_theme_color_override("font_color", Color(0.8, 0.95, 0.8))
 	return l
 
@@ -166,16 +151,8 @@ func _section_label(text: String) -> Label:
 func _field_label(text: String) -> Label:
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_size_override("font_size", 14)
-	l.custom_minimum_size = Vector2(150, 0)
-	return l
-
-
-func _value_label(text: String) -> Label:
-	var l := Label.new()
-	l.text = text
-	l.add_theme_font_size_override("font_size", 14)
-	l.add_theme_color_override("font_color", Color(0.9, 0.9, 1))
+	l.add_theme_font_size_override("font_size", 13)
+	l.custom_minimum_size = Vector2(140, 0)
 	return l
 
 
@@ -189,90 +166,75 @@ func _make_button(text: String, color: Color) -> Button:
 	return b
 
 
-func _local_ip() -> String:
-	var ipv4: String = ""
-	for a in IP.get_local_addresses():
-		if a.contains(".") and not a.begins_with("127."):
-			return a
-		if a.contains("."):
-			ipv4 = a
-	if not ipv4.is_empty():
-		return ipv4
-	for a in IP.get_local_addresses():
-		if not a.begins_with("127."):
-			return a
-	return "127.0.0.1"
+func _set_status(text: String) -> void:
+	if _status != null:
+		_status.text = text
 
 
-func _net() -> Node:
-	return get_node_or_null("/root/LanNet")
-
+# ------------------------------------------------------------- actions
 
 func _on_solo() -> void:
 	get_tree().change_scene_to_file("res://scenes/Main.tscn")
 
 
-func _on_quick_join() -> void:
-	var net: Node = _net()
-	if net == null:
-		_status.text = "Réseau indisponible."
+func _on_create() -> void:
+	var name_text: String = _name_edit.text.strip_edges()
+	if name_text.is_empty():
+		_set_status("Donnez un nom à votre partie.")
 		return
-	_mode = "conquest"
-	net.set("mode", "conquest")
-	var err: int = int(net.call("join_game", "195-35-24-169.sslip.io", 7777))
-	if err == 0:
-		_status.text = "Connexion au serveur public…"
-		get_tree().change_scene_to_file("res://scenes/Multiplayer.tscn")
+	var m: String = "conquest" if _mode_opt.selected == 0 else "vs"
+	_net.call("create_match", name_text, m)
+	_set_status("Partie « %s » créée — elle apparaît dans la liste." % name_text)
+	_name_edit.text = ""
+
+
+func _refresh_list(list: Array) -> void:
+	for child in _list_box.get_children():
+		child.queue_free()
+	_in_match_id = -1
+	_am_host = false
+	var me: int = _net.my_id() if _net != null else 0
+	if list.is_empty():
+		var empty := Label.new()
+		empty.text = "Aucune partie en cours. Créez la première !"
+		empty.add_theme_color_override("font_color", Color(0.6, 0.65, 0.7))
+		_list_box.add_child(empty)
 	else:
-		_status.text = "Erreur de connexion (%d)." % err
+		for m in list:
+			_list_box.add_child(_match_row(m, me))
+	var in_waiting: bool = _in_match_id > 0
+	_start_btn.visible = _am_host and in_waiting
+	_quit_btn.visible = _in_match_id > 0
 
 
-func _on_choose_mode(m: String) -> void:
-	_mode = m
-	var net: Node = _net()
-	if net != null:
-		net.set("mode", m)
-	_mp_header.text = "MODE : " + ("Multi VS (parties à la volée)" if m == "vs" else "Multi Conquête (tournoi)")
-	_mp_panel.visible = true
-	_status.text = ""
+func _match_row(m: Dictionary, me: int) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	var mode_txt: String = "Conquête" if m.get("mode") == "conquest" else "VS"
+	var p_count: int = (m.get("players") as Array).size()
+	var status_txt: String = " (en cours)" if m.get("status") == "running" else ""
+	var label := Label.new()
+	label.text = "%s [%s] — %d joueur(s)%s" % [m.get("name", "?"), mode_txt, p_count, status_txt]
+	label.custom_minimum_size = Vector2(300, 0)
+	label.add_theme_font_size_override("font_size", 14)
+	row.add_child(label)
+
+	if m.get("status") == "waiting" and me > 0 and int(m.get("id")) != _in_match_id:
+		var join := _make_button("Rejoindre", Color(0.18, 0.42, 0.55))
+		var m_id: int = int(m.get("id"))
+		join.pressed.connect(func(): _net.call("join_match", m_id))
+		row.add_child(join)
+	elif me > 0 and m.get("players") != null and me in (m.get("players") as Array):
+		var tag := Label.new()
+		tag.text = "✦ vous êtes ici"
+		tag.add_theme_color_override("font_color", Color(0.5, 1, 0.6))
+		row.add_child(tag)
+		_in_match_id = int(m.get("id"))
+		if m.get("host") == me:
+			_am_host = true
+	return row
 
 
-func _go_room() -> void:
-	get_tree().change_scene_to_file("res://scenes/Room.tscn")
-
-
-func _on_host() -> void:
-	var net: Node = _net()
-	if net == null or _mode.is_empty():
-		_status.text = "Choisissez d'abord un mode multijoueur."
-		return
-	var port: int = int(_host_port.text.strip_edges()) if _host_port.text.strip_edges().is_valid_int() else 7777
-	var err: int = int(net.call("host_game", port))
-	if err == 0:
-		_status.text = "Serveur lancé sur le port %d. Ouverture de la salle…" % port
-		_go_room()
-	else:
-		_status.text = "Impossible d'héberger (port %d occupé ?)." % port
-
-
-func _on_join() -> void:
-	var net: Node = _net()
-	if net == null or _mode.is_empty():
-		_status.text = "Choisissez d'abord un mode multijoueur."
-		return
-	var ip: String = _join_ip.text.strip_edges()
-	var port: int = int(_join_port.text.strip_edges()) if _join_port.text.strip_edges().is_valid_int() else 7777
-	if ip.is_empty():
-		_status.text = "Entrez l'IP du serveur à rejoindre."
-		return
-	var err: int = int(net.call("join_game", ip, port))
-	if err == 0:
-		_status.text = "Connexion à %s:%d…" % [ip, port]
-		if _mode == "conquest":
-			# Conquest is served by a persistent shared server: join the live
-			# world directly (no waiting room — the world is already running).
-			get_tree().change_scene_to_file("res://scenes/Multiplayer.tscn")
-		else:
-			_go_room()
-	else:
-		_status.text = "Erreur de connexion (%d)." % err
+func _on_game_started(m: String) -> void:
+	print("LOBBY: game started (mode=%s) — launching." % m)
+	get_tree().change_scene_to_file("res://scenes/Multiplayer.tscn")

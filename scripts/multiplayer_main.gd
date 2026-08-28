@@ -169,6 +169,15 @@ func _assign_city(peer_id: int) -> void:
 func _client_init() -> void:
 	_show_toast("Connexion au monde en cours…")
 	_ctx_panel.visible = false
+	# Tell the VPS (peer 1) we have loaded /root/Main so it sends us snapshots.
+	if _net != null and _net.is_connected_to_room():
+		_rpc_game_ready.rpc_id(1)
+
+
+## Client-side stub of the "I am in the game" handshake (handled on the server).
+@rpc("any_peer", "reliable")
+func _rpc_game_ready() -> void:
+	pass
 
 
 # ------------------------------------------------------------- process
