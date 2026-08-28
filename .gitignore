@@ -1,0 +1,17 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+*.import
+*.translation
+export.cfg
+/build/
+/dist/
+
+# Ziva editor plugin (proprietary binaries, large - kept local only)
+addons/ziva_agent/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.tmp
+*.log

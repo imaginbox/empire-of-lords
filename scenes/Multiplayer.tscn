@@ -1,0 +1,14 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/multiplayer_main.gd" id="1_mp"]
+[ext_resource type="Script" path="res://scripts/ground.gd" id="2_gr"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1_mp")
+
+[node name="Ground" type="Node2D" parent="."]
+script = ExtResource("2_gr")
+
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(0, 0)
+zoom = Vector2(1, 1)

@@ -1,0 +1,53 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name="Nouveau projet de jeu"
+run/main_scene="res://scenes/Lobby.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+run/flush_stdout_on_print="true"
+config/icon="res://icon.svg"
+
+[autoload]
+
+ZivaNet="*res://scripts/ziva_net.gd"
+LanNet="*res://scripts/lan_net.gd"
+
+[display]
+
+window/size/viewport_width="1280"
+window/size/viewport_height="720"
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[game]
+
+season_length="300"
+
+[physics]
+
+3d/physics_engine="Jolt Physics"
+
+[rendering]
+
+rendering_device/driver.windows="d3d12"
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+
+[run]
+
+main_scene="res://scenes/Lobby.tscn"
+
+[ziva]
+
+multiplayer/user_id="OxU1IX8aGfwfWhxVyL1p0pOosn0gPhdR"
+multiplayer/relay_url="wss://ziva-multiplayer.ziva-multiplayer.workers.dev"
+multiplayer/game_id="579309beb21064a9d9ae06c0296"
