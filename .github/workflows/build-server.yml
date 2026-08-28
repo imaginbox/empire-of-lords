@@ -99,3 +99,50 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: build/empire-of-lords-windows.zip
+
+  build-web:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Godot 4.7
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: 4.7.1-stable
+          use-dotnet: false
+
+      - name: Install export templates
+        run: |
+          set -e
+          mkdir -p ~/.local/share/godot/export_templates
+          curl -sL https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_export_templates.tpz -o /tmp/templates.tpz
+          mkdir -p /tmp/tpz && cd /tmp/tpz
+          unzip -q /tmp/templates.tpz
+          mkdir -p ~/.local/share/godot/export_templates/4.7.1.stable
+          cp -r templates/* ~/.local/share/godot/export_templates/4.7.1.stable/
+
+      - name: Import resources
+        run: |
+          godot --headless --path . --import
+
+      - name: Export Web
+        run: |
+          mkdir -p build/web
+          godot --headless --path . --export-release "Web" build/web/index.html
+
+      - name: Package Web build (zip for itch.io)
+        run: |
+          cd build/web && zip -r ../empire-of-lords-web.zip index.html index.js index.wasm index.pck index.png
+
+      - name: Upload Web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: empire-of-lords-web
+          path: build/empire-of-lords-web.zip
+
+      - name: Attach to GitHub Release (on tags)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/empire-of-lords-web.zip

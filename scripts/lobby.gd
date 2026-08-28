@@ -61,6 +61,23 @@ func _build() -> void:
 	b_solo.pressed.connect(_on_solo)
 	vb.add_child(b_solo)
 
+	if OS.has_feature("web"):
+		# Version navigateur : ENet n'existe pas sur le Web (pas de sockets UDP),
+		# donc on n'affiche que le mode Solo.
+		var note := Label.new()
+		note.text = "Version navigateur — mode Solo uniquement.\nLe multijoueur est disponible dans la version de bureau (Windows)."
+		note.add_theme_font_size_override("font_size", 13)
+		note.add_theme_color_override("font_color", Color(0.9, 0.85, 0.7))
+		note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		vb.add_child(note)
+		_status = Label.new()
+		_status.text = ""
+		_status.add_theme_font_size_override("font_size", 13)
+		_status.add_theme_color_override("font_color", Color(1, 0.7, 0.5))
+		vb.add_child(_status)
+		return
+
 	var b_vs := _make_button("Multi VS  (parties à la volée)", Color(0.18, 0.42, 0.55))
 	b_vs.custom_minimum_size = Vector2(0, 46)
 	b_vs.pressed.connect(func(): _on_choose_mode("vs"))
