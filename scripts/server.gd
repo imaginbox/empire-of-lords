@@ -1,30 +1,35 @@
 extends Node
-## Dedicated persistent Conquest server.
-## Run it headless on a VPS (the binary exported by CI) with:
-##     ./EmpireOfLords_server.x86_64 --server --port 7777
-## This node's ROOT MUST BE NAMED "Main" so that snapshot / command RPCs route
-## to the same node path as the clients' Multiplayer scene (/root/Main).
+## Serveur officiel dedie (VPS).
 ##
-## The server hosts the authoritative GameState, persists it to
-## user://conquest_world.json (resumed on restart), accepts players joining at
-## any time (each gets their own capital city) and broadcasts world snapshots.
-## Other modes (Solo / Multi VS) are NOT served here — this is Conquest only.
+## Deux choses distinctes :
+##   1) LE TOURNOI (Conquete officielle) : un monde PERSISTANT, toujours actif,
+##      cree par le serveur lui-meme. Les joueurs le REJOIGNENT directement.
+##      Le VPS en fixe les regles (saisons, zones, course au Top).
+##   2) LES PARTIES : des matchs ephemeres crees par les joueurs (nommes,
+##      listes dans "parties en cours"). Quand une partie demarre, le serveur
+##      cree un monde neuf POUR CETTE PARTIE uniquement.
+##
+## ROOT DU NODE = "Main" (pour aligner les chemins RPC avec Multiplayer.tscn).
+##
+## Lancement headless : ./serveur.x86_64 --server --port 9080
 
 const SAVE_PATH := "user://conquest_world.json"
 const SNAPSHOT_INTERVAL := 0.12
 const AUTOSAVE_INTERVAL := 15.0
 
-var game: GameState = null
+var game: GameState = null                 # le monde persistant du Tournoi
+var _tournament_peers: Dictionary = {}     # pid -> true (dans le tournoi)
+var _party_worlds: Dictionary = {}         # match_id -> {"game": GameState, "peers": {}}
+var _ready_peers: Dictionary = {}          # pid -> true (a charge la scene de jeu)
 var _net: Node = null
 var _snap_timer := 0.0
 var _save_timer := 0.0
-var _game_peers: Dictionary = {}   # peers that loaded the game scene -> true
 
 
 func _ready() -> void:
 	_net = get_node_or_null("/root/LanNet")
 	if _net == null:
-		print("SERVER: LanNet autoload missing — aborting.")
+		print("SERVER: LanNet autoload missing -- aborting.")
 		get_tree().quit(1)
 		return
 	var port := _arg_int("--port", 9080)
@@ -33,31 +38,34 @@ func _ready() -> void:
 		print("SERVER: cannot host on port %d (err=%d)." % [port, err])
 		get_tree().quit(1)
 		return
-	_net.set("mode", "conquest")
 	print("SERVER: hosting WebSocket server on port %d" % port)
 
+	# --- Tournoi persistant, toujours actif ---
 	game = GameState.new()
 	game.name = "GameState"
 	add_child(game)
 	if game.load_from_file(SAVE_PATH):
-		print("SERVER: world resumed from %s (season %d, zone %d)." % [SAVE_PATH, game.season_number, game._zone_front + 1])
+		print("SERVER: Tournoi repris depuis %s (saison %d, zone %d)." % [SAVE_PATH, game.season_number, game._zone_front + 1])
 	else:
-		game.end_peace()   # no tutorial grace on the shared server
-		print("SERVER: new world created.")
+		game.end_peace()
+		print("SERVER: nouveau Tournoi cree.")
 	_save_state()
 
 	set_multiplayer_authority(1)
 	game.season_ended.connect(_on_season_ended)
 	_net.peer_left.connect(_on_peer_left)
-	print("SERVER: ready. Waiting for players…")
+	print("SERVER: ready. Tournoi actif -- les joueurs peuvent rejoindre.")
 
 
 func _process(delta: float) -> void:
-	game._process(delta)
+	if game != null:
+		game._process(delta)   # le Tournoi simule en permanence
+	for wid in _party_worlds:
+		_party_worlds[wid].game._process(delta)
 	_snap_timer += delta
 	if _snap_timer >= SNAPSHOT_INTERVAL:
 		_snap_timer = 0.0
-		_broadcast_snapshot()
+		_broadcast_snapshots()
 	_save_timer += delta
 	if _save_timer >= AUTOSAVE_INTERVAL:
 		_save_timer = 0.0
@@ -78,7 +86,7 @@ func _save_state() -> void:
 		game.save_to_file(SAVE_PATH)
 
 
-# ------------------------------------------------------------- arg parsing
+# ------------------------------------------------------------- args
 
 func _arg_int(flag: String, default_val: int) -> int:
 	var args: PackedStringArray = OS.get_cmdline_user_args()
@@ -92,164 +100,205 @@ func _arg_int(flag: String, default_val: int) -> int:
 	return default_val
 
 
-# ------------------------------------------------------------- players
-
-func _on_peer_joined(peer_id: int) -> void:
-	# A peer connected to the lobby. They only get a capital once their
-	# match starts (start_match_game).
-	if peer_id > 1:
-		print("SERVER: player %d connected (lobby)." % peer_id)
-
+# ------------------------------------------------------------- peers
 
 func _on_peer_left(peer_id: int) -> void:
-	if peer_id > 1:
-		_game_peers.erase(peer_id)
-		print("SERVER: player %d disconnected." % peer_id)
-
-
-## Called by LanNet when a match starts. The VPS decides how the match is
-## played: every match enters the persistent shared Conquest world and each
-## player of the match receives their own capital city.
-func start_match_game(match_dict: Dictionary) -> void:
-	if game == null:
+	if peer_id <= 1:
 		return
+	_tournament_peers.erase(peer_id)
+	_ready_peers.erase(peer_id)
+	for wid in _party_worlds.keys():
+		var w: Dictionary = _party_worlds[wid]
+		w.peers.erase(peer_id)
+		if w.peers.is_empty():
+			w.game.queue_free()
+			_party_worlds.erase(wid)
+			print("SERVER: partie %s vide, monde ferme." % wid)
+	print("SERVER: player %d disconnected." % peer_id)
+
+
+## Le monde dans lequel un peer joue (Tournoi ou une partie), ou vide.
+func _world_of(peer_id: int) -> Dictionary:
+	if _tournament_peers.has(peer_id):
+		return {"game": game, "peers": _tournament_peers}
+	for wid in _party_worlds:
+		var w: Dictionary = _party_worlds[wid]
+		if w.peers.has(peer_id):
+			return w
+	return {}
+
+
+# ------------------------------------------------------------- TOURNOI
+
+## Appele par LanNet quand un joueur clique "Rejoindre le Tournoi".
+func on_join_tournament(peer_id: int) -> void:
+	if game == null or peer_id <= 1:
+		return
+	_assign_city(game, peer_id)
+	_tournament_peers[peer_id] = true
+	_net.call("notify_game_start", peer_id, "conquest")
+	_broadcast_snapshots()
+	print("SERVER: player %d a rejoint le Tournoi officiel." % peer_id)
+
+
+func _on_season_ended(_rank: int, _gems: int, _realm: int, _res: String) -> void:
+	for p in _tournament_peers:
+		if int(p) > 1:
+			_assign_city(game, int(p))
+	_save_state()
+
+
+# ------------------------------------------------------------- PARTIES
+
+## Appele par LanNet quand une partie creee par un joueur demarre.
+func start_match_game(match_dict: Dictionary) -> void:
 	var players: Array = match_dict.get("players", [])
+	var mid: int = int(match_dict.get("id", -1))
+	if mid < 0:
+		return
+	var g := GameState.new()
+	g.name = "GameState_P%d" % mid
+	add_child(g)
+	g.end_peace()
+	var peers: Dictionary = {}
 	for p in players:
 		var pid: int = int(p)
 		if pid > 1:
-			_assign_city(pid)
-	_broadcast_snapshot()
-	print("SERVER: match \"%s\" (%s) is running — %d player(s) in the world." % [match_dict.get("name", "?"), match_dict.get("mode", "?"), players.size()])
+			_assign_city(g, pid)
+			peers[pid] = true
+	_party_worlds[mid] = {"game": g, "peers": peers}
+	_broadcast_snapshots()
+	print("SERVER: partie \"%s\" demarree -- %d joueur(s), monde neuf." % [match_dict.get("name", "?"), players.size()])
 
 
-func _assign_city(peer_id: int) -> void:
-	if game == null:
+# ------------------------------------------------------------- villes
+
+func _assign_city(g: GameState, peer_id: int) -> void:
+	if g == null:
 		return
-	# Reconnect: if the player already owns a city, just re-reveal it.
-	for c: CityNode in game.cities:
+	for c: CityNode in g.cities:
 		if c.owner == CityNode.OWNER_PLAYER and c.controller == peer_id:
 			c.revealed = true
-			game.node_changed.emit(c.id)
+			g.node_changed.emit(c.id)
 			return
-	# New player: nearest neutral city inside the current frontier.
 	var best: CityNode = null
 	var best_d := INF
-	for c: CityNode in game.cities:
+	for c: CityNode in g.cities:
 		if c.owner == CityNode.OWNER_NEUTRAL and c.controller == 0 \
-				and game.zone_of(c) <= game._zone_front:
+				and g.zone_of(c) <= g._zone_front:
 			var dd: float = c.map_pos.distance_to(Vector2.ZERO)
 			if dd < best_d:
 				best_d = dd
 				best = c
 	if best == null:
-		best = game.get_city(0)
+		best = g.get_city(0)
 	if best == null:
 		return
 	best.owner = CityNode.OWNER_PLAYER
 	best.garrison = maxi(best.garrison, 300)
 	best.controller = peer_id
 	best.revealed = true
-	game.node_changed.emit(best.id)
-	print("SERVER: assigned %s to player %d." % [best.node_name, peer_id])
-
-
-func _on_season_ended(_rank: int, _gems: int, _realm: int, _res: String) -> void:
-	# The map was rebuilt; hand every connected player their capital again.
-	for p in _net.real_peers():
-		if int(p) > 1:
-			_assign_city(int(p))
-	_save_state()
+	g.node_changed.emit(best.id)
+	print("SERVER: %s attribuee au joueur %d." % [best.node_name, peer_id])
 
 
 # ------------------------------------------------------------- snapshots
 
-func _build_snapshot() -> Dictionary:
+func _build_snapshot(g: GameState) -> Dictionary:
 	var city_arr: Array = []
-	for c: CityNode in game.cities:
+	for c: CityNode in g.cities:
 		city_arr.append({
 			"id": c.id, "name": c.node_name, "x": c.map_pos.x, "y": c.map_pos.y,
 			"owner": c.owner, "level": c.level, "garrison": c.garrison,
 			"revealed": c.revealed, "controller": c.controller,
 		})
 	var army_arr: Array = []
-	for a: Army in game.armies:
-		var p: Vector2 = _army_pos(a)
+	for a: Army in g.armies:
+		var p: Vector2 = _army_pos(a, g)
 		army_arr.append({"id": army_arr.size(), "x": p.x, "y": p.y, "faction": a.faction})
 	var zname := ""
-	if game.zones.size() > 0 and game._zone_front < game.zones.size():
-		zname = str(game.zones[game._zone_front]["name"])
+	if g.zones.size() > 0 and g._zone_front < g.zones.size():
+		zname = str(g.zones[g._zone_front]["name"])
 	return {
 		"cities": city_arr, "armies": army_arr,
-		"front": game._zone_front, "zone_total": game.zones.size(),
-		"season": game.season_number, "season_left": game.season_remaining,
-		"gold": game.player.gold, "level": game.player.level,
-		"dominance": game.dominance_score(), "zname": zname,
+		"front": g._zone_front, "zone_total": g.zones.size(),
+		"season": g.season_number, "season_left": g.season_remaining,
+		"gold": g.player.gold, "level": g.player.level,
+		"dominance": g.dominance_score(), "zname": zname,
 	}
 
 
-func _broadcast_snapshot() -> void:
-	if _game_peers.is_empty():
-		return
-	var snap: Dictionary = _build_snapshot()
+func _broadcast_snapshots() -> void:
 	var known: PackedInt32Array = multiplayer.get_peers()
-	for pid in _game_peers:
-		if int(pid) > 1 and int(pid) in known:
-			_recv_snapshot.rpc_id(int(pid), snap)
+	if game != null and not _tournament_peers.is_empty():
+		var tsnap: Dictionary = _build_snapshot(game)
+		for pid in _tournament_peers:
+			if int(pid) > 1 and int(pid) in known and _ready_peers.has(pid):
+				_recv_snapshot.rpc_id(int(pid), tsnap)
+	for wid in _party_worlds:
+		var w: Dictionary = _party_worlds[wid]
+		if w.peers.is_empty():
+			continue
+		var psnap: Dictionary = _build_snapshot(w.game)
+		for pid in w.peers:
+			if int(pid) > 1 and int(pid) in known and _ready_peers.has(pid):
+				_recv_snapshot.rpc_id(int(pid), psnap)
 
 
-## A client signals it has loaded the game scene (/root/Main) and can now
-## receive snapshots. Until then we don't send it anything (avoids RPC noise
-## while it is still in the Lobby).
 @rpc("any_peer", "reliable")
 func _rpc_game_ready() -> void:
 	if not multiplayer.is_server():
 		return
-	_game_peers[multiplayer.get_remote_sender_id()] = true
+	_ready_peers[multiplayer.get_remote_sender_id()] = true
 
 
-## Stub: the server only SENDS snapshots. This exists so the .rpc() callable
-## compiles and routes to clients (which implement the real receiver).
+## Stub : le serveur ne fait qu'ENVOYER les snapshots.
 @rpc("reliable")
 func _recv_snapshot(_snap: Dictionary) -> void:
 	pass
 
 
-func _army_pos(a: Army) -> Vector2:
-	var src: CityNode = game.get_city(a.from_id)
-	var dst: CityNode = game.get_city(a.to_id)
+func _army_pos(a: Army, g: GameState) -> Vector2:
+	var src: CityNode = g.get_city(a.from_id)
+	var dst: CityNode = g.get_city(a.to_id)
 	if src == null or dst == null:
 		return Vector2.ZERO
-	var t: float = clampf((game.time - a.depart_time) / maxf(a.travel_time, 0.001), 0.0, 1.0)
+	var t: float = clampf((g.time - a.depart_time) / maxf(a.travel_time, 0.001), 0.0, 1.0)
 	return src.map_pos.lerp(dst.map_pos, t)
 
 
-# ------------------------------------------------------------- client commands
-## Clients send these via rpc_id(1, ...) targeting /root/Main on this server.
+# ------------------------------------------------------------- commandes clients
 
 @rpc("any_peer", "reliable")
 func _cmd_launch(from_id: int, to_id: int, troops: int) -> void:
-	if game == null:
-		return
 	var peer: int = multiplayer.get_remote_sender_id()
-	var src: CityNode = game.get_city(from_id)
+	var w: Dictionary = _world_of(peer)
+	if w.is_empty():
+		return
+	var g: GameState = w.game
+	var src: CityNode = g.get_city(from_id)
 	if src == null or src.owner != CityNode.OWNER_PLAYER or src.controller != peer:
 		return
-	game.launch_army(from_id, to_id, troops)
+	g.launch_army(from_id, to_id, troops)
 
 
 @rpc("any_peer", "reliable")
 func _cmd_upgrade(city_id: int) -> void:
-	if game == null:
-		return
 	var peer: int = multiplayer.get_remote_sender_id()
-	var c: CityNode = game.get_city(city_id)
+	var w: Dictionary = _world_of(peer)
+	if w.is_empty():
+		return
+	var g: GameState = w.game
+	var c: CityNode = g.get_city(city_id)
 	if c == null or c.owner != CityNode.OWNER_PLAYER or c.controller != peer:
 		return
-	game.upgrade_city(city_id)
+	g.upgrade_city(city_id)
 
 
 @rpc("any_peer", "reliable")
 func _cmd_recruit() -> void:
-	if game == null:
+	var peer: int = multiplayer.get_remote_sender_id()
+	var w: Dictionary = _world_of(peer)
+	if w.is_empty():
 		return
-	game.recruit_ally()
+	w.game.recruit_ally()

@@ -5,6 +5,7 @@ extends SceneTree
 var server_url := "ws://127.0.0.1:9080"
 var auto_start := false
 var do_join := false
+var do_tournament := false
 var start_delay := 0.0
 var want_start := false
 var started := false
@@ -23,6 +24,8 @@ func _initialize() -> void:
 			auto_start = true
 		elif a == "--join":
 			do_join = true
+		elif a == "--tournament":
+			do_tournament = true
 		elif a.begins_with("--start-delay="):
 			start_delay = float(a.trim_prefix("--start-delay="))
 
@@ -75,11 +78,17 @@ func _report_snap() -> void:
 
 func _on_connected() -> void:
 	print("DRIVER connected id=", int(lan.call("my_id")))
+	if do_tournament:
+		if not created:
+			created = true
+			lan.call("join_tournament")
+			print("DRIVER joined tournament (req sent)")
+		return
 	if do_join:
 		return  # wait for the list, then join
 	if not created:
 		created = true
-		lan.call("create_match", "Partie de %d" % int(lan.call("my_id")), "conquest")
+		lan.call("create_match", "Partie de %d" % int(lan.call("my_id")), "vs")
 		print("DRIVER match created (req sent)")
 
 

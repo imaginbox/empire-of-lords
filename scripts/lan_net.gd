@@ -126,6 +126,13 @@ func real_peers() -> Array:
 
 # ------------------------------------------------------------- matchmaking (client)
 
+## The OFFICIAL persistent Tournament (Conquete). Joining it is a direct
+## action (no match to create): the VPS assigns you a capital and starts the
+## persistent world.
+func join_tournament() -> void:
+	_rpc_join_tournament.rpc_id(1)
+
+
 func create_match(match_name: String, m: String) -> void:
 	_rpc_create_match.rpc_id(1, match_name, m)
 
@@ -144,6 +151,11 @@ func start_match() -> void:
 
 func request_matches() -> void:
 	_rpc_request_matches.rpc_id(1)
+
+
+## Server-side helper: tell one client to load the game scene.
+func notify_game_start(pid: int, mode: String) -> void:
+	_rpc_game_start.rpc_id(pid, mode)
 
 
 # --- client-side RPC receivers ---
@@ -165,6 +177,17 @@ func _rpc_game_start(m: String) -> void:
 
 
 # ------------------------------------------------------------- server-side matchmaking
+
+## Server receives a request to join the official persistent Tournament.
+@rpc("any_peer", "reliable")
+func _rpc_join_tournament() -> void:
+	if not multiplayer.is_server():
+		return
+	var pid := multiplayer.get_remote_sender_id()
+	_remove_from_match(pid)   # leave any player-created party first
+	var main: Node = get_node_or_null("/root/Main")
+	if main != null and main.has_method("on_join_tournament"):
+		main.call("on_join_tournament", pid)
 
 ## Server receives a request to create a named match.
 @rpc("any_peer", "reliable")
