@@ -19,6 +19,10 @@ jobs:
           version: 4.7.1-stable
           use-dotnet: false
 
+      - name: Import resources
+        run: |
+          godot --headless --path . --import
+
       - name: Export Linux dedicated server
         run: |
           mkdir -p build
