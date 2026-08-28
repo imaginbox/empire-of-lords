@@ -293,6 +293,7 @@ func start_match_game(match_dict: Dictionary) -> void:
 		"game": g, "peers": peers,
 		"eliminated": {}, "toast": "",
 		"over": false, "vs_winner": "", "over_timer": 0.0,
+		"is_vs": true,
 	}
 	_broadcast_snapshots()
 	print("SERVER: partie \"%s\" demarree -- %d joueur(s), monde reduit (%d villes)." % [match_dict.get("name", "?"), players.size(), g.cities.size()])
@@ -546,5 +547,8 @@ func _cmd_recruit() -> void:
 	var peer: int = multiplayer.get_remote_sender_id()
 	var w: Dictionary = _world_of(peer)
 	if w.is_empty():
+		return
+	# En VS (tous contre tous, dernier survivant), pas d'alliances.
+	if bool(w.get("is_vs", false)):
 		return
 	w.game.recruit_ally()
