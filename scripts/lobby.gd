@@ -30,6 +30,9 @@ var _am_host := false
 var _pseudo := ""
 var _zone_layer: CanvasLayer
 var _zone_box: VBoxContainer
+var _menu_screen: VBoxContainer
+var _vs_screen: VBoxContainer
+var _conquest_screen: VBoxContainer
 
 
 func _ready() -> void:
@@ -112,69 +115,42 @@ func _build() -> void:
 	title.add_theme_constant_override("outline_size", 6)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	title.position = Vector2(0, 30)
+	title.position = Vector2(0, 26)
 	title.size = Vector2(0, 46)
 	add_child(title)
 
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	add_child(center)
+	# ================= ÉCRAN MENU (3 cartes) =================
+	_menu_screen = VBoxContainer.new()
+	_menu_screen.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_menu_screen.add_theme_constant_override("separation", 18)
+	_menu_screen.alignment = BoxContainer.ALIGNMENT_CENTER
+	add_child(_menu_screen)
 
-	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(640, 680)
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	center.add_child(scroll)
+	var cards_row := HBoxContainer.new()
+	cards_row.add_theme_constant_override("separation", 24)
+	cards_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_menu_screen.add_child(cards_row)
+	cards_row.add_child(_make_card("🎮", "SOLO",
+		"Campagne Conquête vs IA.\nSauvegarde, pause, vitesse.",
+		Color(0.2, 0.5, 0.25), _on_solo))
+	cards_row.add_child(_make_card("⚔️", "PARTIE VS",
+		"Créez ou rejoignez une partie\nrapide entre joueurs (free-for-all).",
+		Color(0.45, 0.3, 0.55), _on_open_vs))
+	cards_row.add_child(_make_card("🌐", "CONQUÊTE",
+		"Monde persistant officiel :\ntutoriel, saisons, course au Top.",
+		Color(0.55, 0.32, 0.15), _on_open_conquest))
 
-	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 10)
-	vb.custom_minimum_size = Vector2(600, 0)
-	scroll.add_child(vb)
-
-	# ================= 1) SOLO =================
-	vb.add_child(_section_label("1 · SOLO"))
-	var b_solo := _make_button("🎮  Jouer en Solo — Conquête vs IA (sauvegarde, pause)", Color(0.2, 0.5, 0.25))
-	b_solo.custom_minimum_size = Vector2(0, 46)
-	b_solo.pressed.connect(_on_solo)
-	vb.add_child(b_solo)
-	var note_s := Label.new()
-	note_s.text = "Campagne hors-ligne : conquérez les zones, développez votre royaume, "
-	note_s.text += "avec pause, vitesse et sauvegarde de progression."
-	note_s.add_theme_font_size_override("font_size", 12)
-	note_s.add_theme_color_override("font_color", Color(0.7, 0.78, 0.85))
-	note_s.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vb.add_child(note_s)
-
-	var sep := HSeparator.new()
-	vb.add_child(sep)
-
-	# ================= 2) PARTIES VS =================
-	vb.add_child(_section_label("2 · PARTIES VS"))
-	var note_v := Label.new()
-	note_v.text = "Parties rapides créées par les joueurs : créez-en une (attente + chat), "
-	note_v.text += "ou rejoignez une partie qui attend des joueurs."
-	note_v.add_theme_font_size_override("font_size", 12)
-	note_v.add_theme_color_override("font_color", Color(0.7, 0.78, 0.85))
-	note_v.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vb.add_child(note_v)
-
-	var sep2 := HSeparator.new()
-	vb.add_child(sep2)
-
-	# ================= 3) LE JEU DE CONQUÊTE (persistant) =================
-	vb.add_child(_section_label("3 · LE JEU DE CONQUÊTE (monde persistant)"))
-	var note_c := Label.new()
-	note_c.text = "Le monde persistant, créé par le serveur officiel (admin) et toujours actif. "
-	note_c.text += "Il contient le tutoriel, les saisons, les zones et la course au Top, en multijoueur. "
-	note_c.text += "Rejoignez-le depuis la liste ci-dessous."
-	note_c.add_theme_font_size_override("font_size", 12)
-	note_c.add_theme_color_override("font_color", Color(0.7, 0.78, 0.85))
-	note_c.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vb.add_child(note_c)
-	_add_conquest_row(vb)
+	var hint := Label.new()
+	hint.text = "Choisissez un mode pour commencer."
+	hint.add_theme_font_size_override("font_size", 14)
+	hint.add_theme_color_override("font_color", Color(0.75, 0.82, 0.88))
+	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_menu_screen.add_child(hint)
 
 	var pseudo_row := HBoxContainer.new()
 	pseudo_row.add_theme_constant_override("separation", 6)
-	vb.add_child(pseudo_row)
+	pseudo_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_menu_screen.add_child(pseudo_row)
 	pseudo_row.add_child(_field_label("Votre pseudo :"))
 	_pseudo_edit = LineEdit.new()
 	_pseudo_edit.placeholder_text = "ex. LordAlaric"
@@ -187,14 +163,122 @@ func _build() -> void:
 	_status.text = "Connexion au serveur…"
 	_status.add_theme_font_size_override("font_size", 13)
 	_status.add_theme_color_override("font_color", Color(1, 0.75, 0.5))
-	_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vb.add_child(_status)
+	_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_menu_screen.add_child(_status)
 
 	_retry_btn = _make_button("↻ Re-tenter la connexion", Color(0.4, 0.4, 0.45))
 	_retry_btn.pressed.connect(_connect)
 	_retry_btn.visible = false
-	vb.add_child(_retry_btn)
+	_retry_btn.custom_minimum_size = Vector2(230, 0)
+	_menu_screen.add_child(_retry_btn)
 
+	var version := Label.new()
+	version.text = "v1.1 · serveur officiel 195-35-24-169"
+	version.add_theme_font_size_override("font_size", 11)
+	version.add_theme_color_override("font_color", Color(0.5, 0.55, 0.6))
+	version.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_menu_screen.add_child(version)
+
+	# ================= ÉCRAN PARTIE VS =================
+	_vs_screen = _make_screen("⚔️ PARTIES VS — rapide entre joueurs")
+	_build_vs_screen(_vs_screen)
+
+	# ================= ÉCRAN CONQUÊTE =================
+	_conquest_screen = _make_screen("🌐 LE JEU DE CONQUÊTE — monde persistant")
+	_build_conquest_screen(_conquest_screen)
+
+	_show_screen(_menu_screen)
+
+
+# ------------------------------------------------------- cartes du menu
+
+func _make_card(icon: String, title: String, desc: String, color: Color, cb: Callable) -> Control:
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(250, 210)
+	var s := StyleBoxFlat.new()
+	s.bg_color = color.darkened(0.32)
+	s.border_color = color
+	s.set_border_width_all(2)
+	s.set_corner_radius_all(14)
+	s.content_margin_left = 18
+	s.content_margin_right = 18
+	s.content_margin_top = 18
+	s.content_margin_bottom = 16
+	panel.add_theme_stylebox_override("panel", s)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 10)
+	panel.add_child(vb)
+	var icon_l := Label.new()
+	icon_l.text = icon
+	icon_l.add_theme_font_size_override("font_size", 44)
+	icon_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(icon_l)
+	var t := Label.new()
+	t.text = title
+	t.add_theme_font_size_override("font_size", 24)
+	t.add_theme_color_override("font_color", color.lightened(0.3))
+	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(t)
+	var d := Label.new()
+	d.text = desc
+	d.add_theme_font_size_override("font_size", 13)
+	d.add_theme_color_override("font_color", Color(0.85, 0.9, 0.95))
+	d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	d.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	vb.add_child(d)
+	var btn := _make_button("Jouer", color)
+	btn.pressed.connect(cb)
+	btn.custom_minimum_size = Vector2(0, 42)
+	vb.add_child(btn)
+	return panel
+
+
+func _make_screen(title: String) -> VBoxContainer:
+	var scr := VBoxContainer.new()
+	scr.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scr.visible = false
+	add_child(scr)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scr.add_child(center)
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(780, 0)
+	center.add_child(panel)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 10)
+	panel.add_child(vb)
+	var back := _make_button("← Retour au menu", Color(0.35, 0.35, 0.4))
+	back.pressed.connect(_back_to_menu)
+	vb.add_child(back)
+	vb.add_child(_section_label(title))
+	scr.set_meta("content", vb)
+	return scr
+
+
+func _show_screen(target: Control) -> void:
+	for s in [_menu_screen, _vs_screen, _conquest_screen]:
+		if s != null:
+			s.visible = false
+	if target != null:
+		target.visible = true
+
+
+func _back_to_menu() -> void:
+	_show_screen(_menu_screen)
+
+
+func _on_open_vs() -> void:
+	_show_screen(_vs_screen)
+
+
+func _on_open_conquest() -> void:
+	_show_screen(_conquest_screen)
+
+
+# ------------------------------------------------------- contenu des écrans
+
+func _build_vs_screen(screen: VBoxContainer) -> void:
+	var vb: VBoxContainer = screen.get_meta("content")
 	var create_panel := PanelContainer.new()
 	vb.add_child(create_panel)
 	var cb := VBoxContainer.new()
@@ -244,12 +328,18 @@ func _build() -> void:
 
 	_build_chat(vb)
 
-	var version := Label.new()
-	version.text = "v1.0 · serveur officiel 195-35-24-169"
-	version.add_theme_font_size_override("font_size", 11)
-	version.add_theme_color_override("font_color", Color(0.5, 0.55, 0.6))
-	version.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	vb.add_child(version)
+
+func _build_conquest_screen(screen: VBoxContainer) -> void:
+	var vb: VBoxContainer = screen.get_meta("content")
+	var note := Label.new()
+	note.text = "Le monde persistant, créé par le serveur officiel (admin) et toujours actif. "
+	note.text += "Il contient le tutoriel, les saisons, les zones et la course au Top, en multijoueur. "
+	note.text += "Votre royaume y reste et évolue même entre vos sessions."
+	note.add_theme_font_size_override("font_size", 13)
+	note.add_theme_color_override("font_color", Color(0.8, 0.85, 0.9))
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(note)
+	_add_conquest_row(vb)
 
 
 func _add_conquest_row(parent: Node) -> void:
